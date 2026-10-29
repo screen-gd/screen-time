@@ -35,8 +35,10 @@ allows the same `app/` renderer to run in a browser.
 
 To use the browser surface, run `npm run backend:start` and open
 <http://127.0.0.1:43821>. The backend serves the bundled renderer and exposes the
-read/write interface under `/api/v1/`. A separately hosted renderer can set
-`window.TALLY_BACKEND_URL` before `web-api.js` loads. The backend is loopback-only
+read/write interface under `/api/v1/`, protected by a per-process token that is
+injected into the served page. A separately hosted renderer can set
+`window.TALLY_BACKEND_URL` and `window.TALLY_BACKEND_TOKEN` before `web-api.js`
+loads, and its origin must be allowed with `--allow-origin`. The backend is loopback-only
 by default; use `--bind` only when you intentionally want another machine to reach
 it.
 
