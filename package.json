@@ -7,18 +7,21 @@
   "main": "electron/main.js",
   "private": true,
   "scripts": {
-    "start": "node scripts/build-native.js && electron .",
+    "start": "node scripts/build-native.js && npm run backend:build && electron .",
     "demo": "electron . --demo",
     "native": "node scripts/build-native.js",
+    "backend:build": "node scripts/build-backend.js",
+    "backend:start": "node scripts/build-backend.js && node scripts/run-backend.js",
+    "benchmark": "node scripts/benchmark.js",
     "make-icons": "node scripts/make-icons.js",
     "icons": "node scripts/fetch-icons.js",
     "dither": "node scripts/make-dither.js",
     "check": "node scripts/koffi-test.js",
     "test": "node scripts/tracker-test.js",
-    "dist": "node scripts/build-native.js && electron-builder --win nsis --publish never",
-    "dist:dir": "node scripts/build-native.js && electron-builder --dir",
-    "dist:mac": "electron-builder --mac --publish never",
-    "dist:linux": "electron-builder --linux --publish never"
+    "dist": "node scripts/build-native.js && npm run backend:build && electron-builder --win nsis --publish never",
+    "dist:dir": "node scripts/build-native.js && npm run backend:build && electron-builder --dir",
+    "dist:mac": "node scripts/build-native.js && npm run backend:build && electron-builder --mac --publish never",
+    "dist:linux": "node scripts/build-native.js && npm run backend:build && electron-builder --linux --publish never"
   },
   "dependencies": {
     "electron-updater": "^6.8.11",
@@ -42,12 +45,14 @@
     "files": [
       "electron/**/*",
       "app/**/*",
+      "backend/tally-backend*",
       "build/*.png",
       "native/media/build/Release/*.node",
       "package.json"
     ],
     "asarUnpack": [
-      "native/media/build/Release/*.node"
+      "native/media/build/Release/*.node",
+      "backend/tally-backend*"
     ],
     "win": {
       "target": [

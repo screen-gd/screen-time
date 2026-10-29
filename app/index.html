@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; script-src 'self'; connect-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*">
   <title>Tally - Screen time</title>
   <link rel="stylesheet" href="dither.css">
   <link rel="stylesheet" href="app.css">
@@ -62,6 +62,7 @@
   </dialog>
 
   <script src="demo-data.js"></script>
+  <script src="web-api.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

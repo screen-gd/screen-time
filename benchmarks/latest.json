@@ -1,0 +1,72 @@
+{
+  "generatedAt": "2026-10-28T20:01:49.117Z",
+  "iterations": 3,
+  "warmupMs": 1000,
+  "startup": [
+    {
+      "name": "backend-startup",
+      "startupMs": 55
+    },
+    {
+      "name": "backend-plus-electron-startup",
+      "startupMs": 2580
+    },
+    {
+      "name": "coupled-electron-startup",
+      "startupMs": 2553
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "coupled-electron-idle",
+      "pid": 21844,
+      "startupMs": 2553,
+      "rssBytes": {
+        "samples": [
+          386670592,
+          396423168,
+          395530240
+        ],
+        "median": 395530240,
+        "min": 386670592,
+        "max": 396423168
+      },
+      "snapshotMs": null
+    },
+    {
+      "name": "decoupled-backend-only",
+      "pid": 22088,
+      "startupMs": 36,
+      "rssBytes": {
+        "samples": [
+          15372288,
+          15372288,
+          15372288
+        ],
+        "median": 15372288,
+        "min": 15372288,
+        "max": 15372288
+      },
+      "snapshotMs": {
+        "median": 3.1564999999973224,
+        "p95": 107.06570000000283
+      }
+    },
+    {
+      "name": "decoupled-backend-plus-electron-idle",
+      "pid": 13384,
+      "startupMs": 2580,
+      "rssBytes": {
+        "samples": [
+          398815232,
+          399364096,
+          398700544
+        ],
+        "median": 398815232,
+        "min": 398700544,
+        "max": 399364096
+      },
+      "snapshotMs": null
+    }
+  ]
+}

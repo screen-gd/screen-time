@@ -9,6 +9,7 @@ const { Store } = require('./tracker/store');
 const { Tracker } = require('./tracker');
 const browsers = require('./tracker/browsers');
 const { Updater } = require('./updater');
+const { BackendStore, startBackend, stopBackend } = require('./backend-client');
 
 const ROOT = path.join(__dirname, '..');
 const DEMO = process.env.TALLY_DEMO === '1' || process.argv.includes('--demo');
@@ -33,6 +34,9 @@ let tracker = null;
 let updater = null;
 let changeTimer = null;
 let rebuildTrayMenu = null;
+let backendRuntime = null;
+let remoteBackend = false;
+let trackingHeartbeat = null;
 
 function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -70,7 +74,7 @@ function demoNow() {
   return date;
 }
 
-function snapshot() {
+function localSnapshot() {
   const now = DEMO ? demoNow() : new Date();
   const today = store.aggregate(1);
   const yesterdayDate = new Date(now);
@@ -110,6 +114,21 @@ function snapshot() {
       fileSize,
     },
   };
+}
+
+async function snapshot() {
+  if (!remoteBackend) return localSnapshot();
+  const result = await store.snapshot();
+  result.tracking = { ...result.tracking, ...tracker.getStatus(), paused: store.settings.paused, sampling: store.settings.sampleSeconds, demo: false };
+  result.system = {
+    ...result.system,
+    version: app.getVersion(),
+    browserList: browsers.browserAvailability(),
+    supported: tracker.status.supported,
+    permissions: { accessibility: tracker.status.accessibility },
+    update: updater ? updater.getState() : result.system.update,
+  };
+  return result;
 }
 
 function createWindow() {
@@ -258,13 +277,14 @@ function applyLoginItem(settings) {
 
 function registerIpc() {
   ipcMain.handle('tally:snapshot', () => snapshot());
-  ipcMain.handle('tally:range', (_event, days) => {
+  ipcMain.handle('tally:range', async (_event, days) => {
     const count = [1, 7, 30].includes(Number(days)) ? Number(days) : 1;
-    return store.aggregate(count);
+    return remoteBackend ? store.range(count) : store.aggregate(count);
   });
-  ipcMain.handle('tally:settings:update', (_event, patch) => {
+  ipcMain.handle('tally:settings:update', async (_event, patch) => {
     const before = { ...store.settings };
-    const settings = store.updateSettings(patch && typeof patch === 'object' ? patch : {});
+    const result = await store.updateSettings(patch && typeof patch === 'object' ? patch : {});
+    const settings = result.settings || result;
     if (settings.launchAtLogin !== before.launchAtLogin) applyLoginItem(settings);
     if (settings.autoUpdate !== before.autoUpdate && updater) updater.setEnabled(updatesAllowed(settings));
     if (settings.sampleSeconds !== before.sampleSeconds) tracker.restart();
@@ -273,10 +293,10 @@ function registerIpc() {
       if (rebuildTrayMenu) rebuildTrayMenu();
       if (tray) tray.setToolTip(settings.paused ? 'Tally - tracking paused' : 'Tally - screen time');
     }
-    return { settings, tracking: tracker.getStatus() };
+    return { settings, tracking: result.tracking || tracker.getStatus() };
   });
-  ipcMain.handle('tally:clear', () => {
-    store.clear();
+  ipcMain.handle('tally:clear', async () => {
+    await store.clear();
     store.flush();
     send('tally:changed', { at: Date.now() });
     return true;
@@ -308,14 +328,27 @@ if (!app.requestSingleInstanceLock()) {
     if (win) { win.show(); win.focus(); }
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     if (process.platform === 'win32') app.setAppUserModelId('com.tally.screentime');
     // macOS needs a real menu bar for Cmd+Q/C/V to work; other OSes hide it.
     Menu.setApplicationMenu(process.platform === 'darwin'
       ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }])
       : null);
 
-    store = new Store(path.join(app.getPath('userData'), 'tally-data.json')).load();
+    const dataFile = path.join(app.getPath('userData'), 'tally-data.json');
+    if (!DEMO) {
+      try {
+        backendRuntime = await startBackend({ root: ROOT, dataFile, frontendDir: app.isPackaged ? '' : path.join(ROOT, 'app') });
+        store = await new BackendStore({ baseUrl: backendRuntime.baseUrl, file: dataFile }).connect();
+        remoteBackend = true;
+        console.log('[tally] using Go backend at', backendRuntime.baseUrl);
+      } catch (error) {
+        console.error('[tally] Go backend unavailable, using local store:', error.message);
+        stopBackend(backendRuntime && backendRuntime.process);
+        backendRuntime = null;
+      }
+    }
+    if (!store) store = new Store(dataFile).load();
     if (DEMO) {
       const demo = require('../app/demo-data.js');
       store.loadDemo(demo.buildDays(30));
@@ -338,7 +371,10 @@ if (!app.requestSingleInstanceLock()) {
     });
 
     tracker = new Tracker({ store });
-    tracker.on('change', broadcast);
+    tracker.on('change', () => {
+      broadcast();
+      if (remoteBackend) store.sendTracking(tracker.getStatus());
+    });
     if (!DEMO && !SCREENSHOT) tracker.start();
     else if (DEMO) {
       tracker.status.lastSampleAt = demoNow().getTime();
@@ -350,6 +386,11 @@ if (!app.requestSingleInstanceLock()) {
       tracker.status.media = true;
       tracker.status.mediaSessions = 2;
       tracker.status.mediaAvailable = true;
+    }
+    if (remoteBackend) store.sendTracking(tracker.getStatus());
+    if (remoteBackend) {
+      trackingHeartbeat = setInterval(() => store.sendTracking(tracker.getStatus()), 10000);
+      if (trackingHeartbeat.unref) trackingHeartbeat.unref();
     }
 
     // Stop the sampler outright while the screen is locked or the machine sleeps,
@@ -377,6 +418,8 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', () => {
     app.isQuitting = true;
     if (tracker) tracker.stop();
+    if (trackingHeartbeat) clearInterval(trackingHeartbeat);
     if (store) store.flush();
+    stopBackend(backendRuntime && backendRuntime.process);
   });
 }

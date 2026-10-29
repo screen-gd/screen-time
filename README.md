@@ -23,7 +23,33 @@ npm install
 npm start        # starts in the tray; closing the window keeps counting
 npm run demo     # sample data, tracking off
 npm test         # the sampling rules, no desktop needed
+npm run backend:start # Go backend plus the same UI at http://127.0.0.1:43821
+npm run benchmark    # repeatable RSS/startup/API comparison
 ```
+
+Normal Electron launches start a loopback Go backend automatically. The Electron
+tracker remains the desktop collector because foreground-window and browser-history
+access are OS-specific; it sends samples to the backend, which owns the JSON file,
+settings and aggregation. This keeps the data interface independent of the UI and
+allows the same `app/` renderer to run in a browser.
+
+To use the browser surface, run `npm run backend:start` and open
+<http://127.0.0.1:43821>. The backend serves the bundled renderer and exposes the
+read/write interface under `/api/v1/`. A separately hosted renderer can set
+`window.TALLY_BACKEND_URL` before `web-api.js` loads. The backend is loopback-only
+by default; use `--bind` only when you intentionally want another machine to reach
+it.
+
+`npm run benchmark` writes [`benchmarks/latest.md`](benchmarks/latest.md) and the
+raw samples in `benchmarks/latest.json`. The checked-in Windows run measured a
+14.7 MB median Go backend when the Electron frontend was closed, compared with
+377.2 MB for the coupled Electron idle process (a 96.1% lower resident set).
+Keeping the Electron frontend open with the backend measured 380.3 MB because
+Chromium still dominates memory; the saving comes from being able to leave that
+frontend closed.
+
+The same run measured startup at 55 ms for the backend alone, 2,580 ms for the
+backend followed by Electron, and 2,553 ms for the coupled Electron app.
 
 The first run starts empty. Tally samples the foreground window every 5 seconds and saves after the first few records.
 
@@ -85,9 +111,12 @@ One file, written atomically, at most every 15 seconds while tracking. Deleting 
 | `electron/tracker/browsers.js` | browser profile discovery, copied history lookup (`sql.js`) |
 | `electron/tracker/store.js` | JSON store, per-day totals, aggregation, retention |
 | `electron/tracker/index.js` | sampling loop, idle and media rules, self-exclusion |
+| `electron/backend-client.js` | starts the Go process and adapts its HTTP interface to the tracker/UI seam |
+| `backend/` | standalone Go data backend, HTTP interface, static browser hosting and tests |
 | `app/` | renderer: shell, three screens, settings, bundled Geist fonts |
 | `app/icons/` | brand glyphs bundled from [thesvg.org](https://thesvg.org); `sources.json` lists each slug |
 | `scripts/tracker-test.js` | the sampling rules, run by `npm test` |
+| `scripts/benchmark.js` | measures process-tree RSS, startup time and backend snapshot latency |
 | `.github/workflows/release.yml` | tests and builds all three platforms; publishes them as a release on every merge to `main` or a pushed `v*` tag |
 
 Sample data lives in `app/demo-data.js` and is used only by `npm run demo` and the browser preview.

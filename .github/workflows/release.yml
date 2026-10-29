@@ -85,11 +85,19 @@ jobs:
           node-version: 22
           cache: npm
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
       - name: Install dependencies
         run: npm ci
 
       - name: Run the tracker tests
         run: npm test
+
+      - name: Run backend tests
+        working-directory: backend
+        run: go test ./...
 
       - name: Stamp the version
         shell: pwsh
@@ -123,11 +131,19 @@ jobs:
           node-version: 22
           cache: npm
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
       - name: Install dependencies
         run: npm ci
 
       - name: Run the tracker tests
         run: npm test
+
+      - name: Run backend tests
+        working-directory: backend
+        run: go test ./...
 
       # A TextEdit document gives the reader a focused window, so the
       # Accessibility title read is exercised, not just the frontmost app.
@@ -182,6 +198,10 @@ jobs:
           node-version: 22
           cache: npm
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
       - name: Install X11 tools
         # xfonts-base carries xterm's compiled-in font; without it xterm exits
         # at launch and the smoke check has no window to read.
@@ -192,6 +212,10 @@ jobs:
 
       - name: Run the tracker tests
         run: npm test
+
+      - name: Run backend tests
+        working-directory: backend
+        run: go test ./...
 
       - name: Smoke-check the X11 reader
         shell: bash
