@@ -339,7 +339,7 @@ if (!app.requestSingleInstanceLock()) {
     if (!DEMO) {
       try {
         backendRuntime = await startBackend({ root: ROOT, dataFile, frontendDir: app.isPackaged ? '' : path.join(ROOT, 'app') });
-        store = await new BackendStore({ baseUrl: backendRuntime.baseUrl, file: dataFile }).connect();
+        store = await new BackendStore({ baseUrl: backendRuntime.baseUrl, token: backendRuntime.token, file: dataFile }).connect();
         remoteBackend = true;
         console.log('[tally] using Go backend at', backendRuntime.baseUrl);
       } catch (error) {

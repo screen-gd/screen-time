@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
@@ -10,14 +11,14 @@ function cleanBaseUrl(value) {
   return String(value || '').replace(/\/+$/, '');
 }
 
-async function request(baseUrl, pathname, options = {}) {
+async function request(baseUrl, pathname, options = {}, token = '') {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeout || REQUEST_TIMEOUT_MS);
   try {
     const response = await fetch(`${cleanBaseUrl(baseUrl)}${pathname}`, {
       ...options,
       signal: controller.signal,
-      headers: { 'content-type': 'application/json', ...(options.headers || {}) },
+      headers: { 'content-type': 'application/json', 'x-tally-token': token, ...(options.headers || {}) },
     });
     if (!response.ok) throw new Error(`backend ${response.status}: ${await response.text()}`);
     if (response.status === 204) return null;
@@ -28,8 +29,9 @@ async function request(baseUrl, pathname, options = {}) {
 }
 
 class BackendStore {
-  constructor({ baseUrl, file }) {
+  constructor({ baseUrl, token, file }) {
     this.baseUrl = cleanBaseUrl(baseUrl);
+    this.token = token || '';
     this.file = file;
     this.settings = null;
     this.data = { createdAt: null, days: {} };
@@ -44,19 +46,19 @@ class BackendStore {
   }
 
   async snapshot() {
-    const snapshot = await request(this.baseUrl, '/api/v1/snapshot');
+    const snapshot = await request(this.baseUrl, '/api/v1/snapshot', {}, this.token);
     this.settings = snapshot.settings;
     return snapshot;
   }
 
   async range(days) {
-    return request(this.baseUrl, `/api/v1/range?days=${encodeURIComponent(days)}`);
+    return request(this.baseUrl, `/api/v1/range?days=${encodeURIComponent(days)}`, {}, this.token);
   }
 
   async updateSettings(patch) {
     const result = await request(this.baseUrl, '/api/v1/settings', {
       method: 'PATCH', body: JSON.stringify(patch || {}),
-    });
+    }, this.token);
     this.settings = result.settings;
     return result;
   }
@@ -64,19 +66,19 @@ class BackendStore {
   record(sample) {
     // Keep sampling non-blocking while serialising writes to preserve data order.
     this.pendingRecords = this.pendingRecords
-      .then(() => request(this.baseUrl, '/api/v1/record', { method: 'POST', body: JSON.stringify(sample) }))
+      .then(() => request(this.baseUrl, '/api/v1/record', { method: 'POST', body: JSON.stringify(sample) }, this.token))
       .catch((error) => console.error('[tally] backend record failed:', error.message));
     return this.pendingRecords;
   }
 
   async clear() {
-    await request(this.baseUrl, '/api/v1/clear', { method: 'POST', body: '{}' });
+    await request(this.baseUrl, '/api/v1/clear', { method: 'POST', body: '{}' }, this.token);
     return true;
   }
 
   async sendTracking(status) {
     try {
-      await request(this.baseUrl, '/api/v1/tracking', { method: 'POST', body: JSON.stringify(status) });
+      await request(this.baseUrl, '/api/v1/tracking', { method: 'POST', body: JSON.stringify(status) }, this.token);
     } catch (error) {
       console.error('[tally] backend status failed:', error.message);
     }
@@ -104,8 +106,9 @@ function executableCandidates(root) {
 
 function startBackend({ root, dataFile, frontendDir }) {
   if (process.env.TALLY_BACKEND_URL) {
-    return Promise.resolve({ baseUrl: cleanBaseUrl(process.env.TALLY_BACKEND_URL), process: null });
+    return Promise.resolve({ baseUrl: cleanBaseUrl(process.env.TALLY_BACKEND_URL), token: process.env.TALLY_BACKEND_TOKEN || '', process: null });
   }
+  const token = crypto.randomBytes(32).toString('hex');
   const binary = executableCandidates(root).find((candidate) => fs.existsSync(candidate));
   const backendRoot = path.join(root, 'backend');
   const command = binary || 'go';
@@ -116,7 +119,7 @@ function startBackend({ root, dataFile, frontendDir }) {
     cwd: binary ? path.dirname(binary) : backendRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
-    env: { ...process.env, TALLY_BACKEND_DATA_FILE: dataFile },
+    env: { ...process.env, TALLY_BACKEND_DATA_FILE: dataFile, TALLY_BACKEND_TOKEN: token },
   });
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -133,7 +136,7 @@ function startBackend({ root, dataFile, frontendDir }) {
       const match = output.match(/TALLY_BACKEND_READY=(https?:\/\/[^\s\r\n]+)/);
       if (match) {
         clearTimeout(timer);
-        finish(null, { baseUrl: match[1], process: child });
+        finish(null, { baseUrl: match[1], token, process: child });
       }
     });
     child.stderr.on('data', (chunk) => process.stderr.write(`[tally-backend] ${chunk}`));

@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 
 	"github.com/screen-gd/screen-time/backend/internal/server"
@@ -41,6 +42,16 @@ func defaultDataFile() string {
 	}
 }
 
+func splitList(value string) []string {
+	var items []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
 func main() {
 	defaultPort := 43821
 	if value := os.Getenv("TALLY_BACKEND_PORT"); value != "" {
@@ -55,13 +66,24 @@ func main() {
 	bind := flag.String("bind", defaultBind, "address to bind")
 	port := flag.Int("port", defaultPort, "TCP port (0 chooses a free port)")
 	frontendDir := flag.String("frontend-dir", "", "directory containing the browser frontend")
+	allowHosts := flag.String("allow-host", os.Getenv("TALLY_BACKEND_ALLOWED_HOSTS"), "comma-separated extra Host names accepted besides loopback")
+	allowOrigins := flag.String("allow-origin", os.Getenv("TALLY_BACKEND_ALLOWED_ORIGINS"), "comma-separated extra browser origins allowed to call the API")
 	flag.Parse()
+
+	hosts := splitList(*allowHosts)
+	if ip := net.ParseIP(*bind); ip != nil && !ip.IsUnspecified() {
+		hosts = append(hosts, ip.String())
+	}
 
 	data, err := store.Open(*dataFile)
 	if err != nil {
 		log.Fatalf("open data store: %v", err)
 	}
-	api := server.New(data, *frontendDir)
+	// TALLY_BACKEND_TOKEN lets a launcher (Electron) share the token; otherwise
+	// a random one is generated and only exposed through the served index.html.
+	api := server.New(data, *frontendDir, server.Options{
+		Token: os.Getenv("TALLY_BACKEND_TOKEN"), AllowedHosts: hosts, AllowedOrigins: splitList(*allowOrigins),
+	})
 	defer data.Flush()
 	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", *bind, *port))
 	if err != nil {

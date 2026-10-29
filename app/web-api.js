@@ -9,11 +9,14 @@
   // A file-based client can opt into the backend explicitly by setting the URL.
   if (window.location.protocol === 'file:' && !window.TALLY_BACKEND_URL) return;
   const base = String(window.TALLY_BACKEND_URL || (window.location.protocol === 'file:' ? 'http://127.0.0.1:43821' : window.location.origin)).replace(/\/+$/, '');
+  // The backend injects its per-process API token into the index.html it serves.
+  const tokenMeta = document.querySelector('meta[name="tally-token"]');
+  const token = String(window.TALLY_BACKEND_TOKEN || (tokenMeta && tokenMeta.content) || '');
 
   async function request(path, options) {
     const response = await fetch(`${base}${path}`, {
       ...options,
-      headers: { 'content-type': 'application/json', ...(options && options.headers) },
+      headers: { 'content-type': 'application/json', 'x-tally-token': token, ...(options && options.headers) },
     });
     if (!response.ok) throw new Error(`backend ${response.status}`);
     return response.status === 204 ? null : response.json();
