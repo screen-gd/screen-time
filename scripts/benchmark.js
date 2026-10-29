@@ -92,8 +92,9 @@ async function measureScenario(name, command, args, env, readyPattern, apiBase =
     const memory = [];
     for (let i = 0; i < ITERATIONS; i++) { memory.push(processTreeBytes(running.child.pid) + extraPids.reduce((sum, pid) => sum + processTreeBytes(pid), 0)); await sleep(500); }
     const apiMs = [];
-    if (apiBase) {
-      for (let i = 0; i < ITERATIONS; i++) { const t = performance.now(); await fetch(`${apiBase}/api/v1/snapshot`, { headers: { 'x-tally-token': BACKEND_TOKEN } }); apiMs.push(performance.now() - t); }
+    const target = apiBase === true ? running.ready : apiBase;
+    if (target) {
+      for (let i = 0; i < ITERATIONS; i++) { const t = performance.now(); await fetch(`${target}/api/v1/snapshot`, { headers: { 'x-tally-token': BACKEND_TOKEN } }); apiMs.push(performance.now() - t); }
     }
     const sorted = [...memory].sort((a, b) => a - b);
     const apiSorted = [...apiMs].sort((a, b) => a - b);
@@ -119,7 +120,7 @@ async function main() {
   const results = [];
   try {
     results.push(await measureScenario('coupled-electron-idle', electronCommand(), electronArgs(['.', '--demo', '--hidden']), { TALLY_DEMO: '1', TALLY_USER_DATA: coupledData }, null));
-    results.push(await measureScenario('decoupled-backend-only', backendCommand(), ['--port', '0', '--data', backendData], { TALLY_BACKEND_TOKEN: BACKEND_TOKEN }, /TALLY_BACKEND_READY=(https?:\/\/[^\s\r\n]+)/, backendBase));
+    results.push(await measureScenario('decoupled-backend-only', backendCommand(), ['--port', '0', '--data', backendData], { TALLY_BACKEND_TOKEN: BACKEND_TOKEN }, /TALLY_BACKEND_READY=(https?:\/\/[^\s\r\n]+)/, true));
     results.push(await measureScenario('decoupled-backend-plus-electron-idle', electronCommand(), electronArgs(['.', '--hidden']), { TALLY_BACKEND_URL: backendBase, TALLY_BACKEND_TOKEN: BACKEND_TOKEN, TALLY_USER_DATA: path.join(temp, 'frontend') }, null, null, [backend.child.pid], backend.readyAt));
   } finally { terminate(backend.child); }
 
