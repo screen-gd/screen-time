@@ -1,4 +1,4 @@
-# Tally
+# screen-time
 
 A local screen-time tracker for Windows, macOS and Linux. It records the app in front of you and, when that app is a browser, the site on screen. Four screens: Today, Apps, Websites and Settings.
 
@@ -8,13 +8,13 @@ No account, no extension, no upload. One JSON file on this computer. Its only ne
 
 Download from [Releases](https://github.com/screen-gd/screen-time/releases):
 
-- **Windows:** `Tally-Setup-<version>.exe`. The installer is per-user, so it needs no administrator password, and it can create a desktop shortcut.
-- **macOS:** `Tally-<version>-mac-arm64.dmg` or `-x64.dmg` (zip files also work). The build is not notarized, so macOS blocks the first launch. Open System Settings › Privacy & Security and choose Open Anyway, or run `xattr -dr com.apple.quarantine /Applications/Tally.app`.
-- **Linux:** `Tally-<version>-linux-x86_64.AppImage`, or `Tally-<version>-linux-amd64.deb` for a package-managed install.
+- **Windows:** `screen-time-Setup-<version>.exe`. The installer is per-user, so it needs no administrator password, and it can create a desktop shortcut.
+- **macOS:** `screen-time-<version>-mac-arm64.dmg` or `-x64.dmg` (zip files also work). The build is not notarized, so macOS blocks the first launch. Open System Settings › Privacy & Security and choose Open Anyway, or run `xattr -dr com.apple.quarantine /Applications/screen-time.app`.
+- **Linux:** `screen-time-<version>-linux-x86_64.AppImage`, or `screen-time-<version>-linux-amd64.deb` for a package-managed install.
 
 The build is unsigned, so Windows SmartScreen may ask you to confirm the first launch. The source for every release is the tagged commit in this repository; the installers are built by [`.github/workflows/release.yml`](.github/workflows/release.yml) on GitHub Actions.
 
-On Windows and on the Linux AppImage, Tally updates itself. It checks Releases shortly after it starts and every six hours, downloads a new version in the background and installs it when Tally quits. Settings > About shows the status, has a "Restart to update" button and can turn updates off. The macOS app and the .deb package do not update themselves yet; that needs a signed app and in-place package updates.
+On Windows and on the Linux AppImage, screen-time updates itself. It checks Releases shortly after it starts and every six hours, downloads a new version in the background and installs it when screen-time quits. Settings > About shows the status, has a "Restart to update" button and can turn updates off. The macOS app and the .deb package do not update themselves yet; that needs a signed app and in-place package updates.
 
 ## Run from source
 
@@ -53,7 +53,7 @@ frontend closed.
 The same run measured startup at 55 ms for the backend alone, 2,580 ms for the
 backend followed by Electron, and 2,553 ms for the coupled Electron app.
 
-The first run starts empty. Tally samples the foreground window every 5 seconds and saves after the first few records.
+The first run starts empty. screen-time samples the foreground window every 5 seconds and saves after the first few records.
 
 If nothing is recorded, `npm run check` prints the foreground window, its process, its media sessions and the idle clock through the same calls the tracker uses.
 
@@ -62,7 +62,7 @@ If nothing is recorded, `npm run check` prints the foreground window, its proces
 ## Build
 
 ```bash
-npm run dist     # dist/Tally-Setup-<version>.exe, the same file Releases ships
+npm run dist     # dist/screen-time-Setup-<version>.exe, the same file Releases ships
 npm run icons    # refresh the bundled brand glyphs from thesvg.org
 ```
 
@@ -76,11 +76,13 @@ Every merge to `main` publishes a release. [`.github/workflows/release.yml`](.gi
 - Idle time past 2 minutes is not counted (1/2/5/10 in Settings). The threshold is measured from the last keyboard or mouse input.
 - **Media keeps it awake.** On Windows, a film, a call or a video in the front window is counted even with hands off the keyboard, because Windows reports the media session and the app that owns it. Media playing in a background app does not keep counting: the window in front still has to be the one playing. Media sessions are Windows-only; on macOS and Linux a video counts by the plain idle rules. A full-screen app or presentation mode counts on all three, which covers gamepad-only play.
 - With nothing playing and no input, the sampler drops from every 5 seconds to every 20, and stops entirely while the screen is locked or the machine sleeps.
-- Website names come from the browser's own history file. Tally copies `History` or `places.sqlite` to a temporary folder, matches the window title against recent visits, then deletes the copy. The history itself is never modified.
+- Website names come from the browser's own history file. screen-time copies `History` or `places.sqlite` to a temporary folder, matches the window title against recent visits, then deletes the copy. The history itself is never modified.
 - Browsers: Chrome, Chromium, Edge, Brave, Vivaldi, Opera, Opera GX, Arc, Firefox and Zen.
 - History is kept for 30, 90 or 365 days, then pruned.
 
-Pause from the tray or the sidebar. Tally can start hidden at login. Settings › Appearance offers preset themes (Ink, T3 Code, T3 Chat, Forest, Fire) or a custom palette built from three colours.
+Closing the window releases the frontend while tracking continues in the tray. Right-click the tray icon to see today's total and three most-used apps, pause or resume tracking, or open screen-time again. Choose Quit to stop tracking and exit. Starting hidden at login does not load the frontend.
+
+Pause from the tray or the sidebar. screen-time can start hidden at login. Settings › Appearance offers preset themes (Ink, T3 Code, T3 Chat, Forest, Fire) or a custom palette built from three colours.
 
 ## Where the data lives
 
@@ -90,8 +92,8 @@ One file, written atomically, at most every 15 seconds while tracking. Deleting 
 
 ## Limits
 
-- **Linux needs an X11 session.** On Wayland, apps cannot read the active window, so Tally reports tracking as unavailable and counts nothing. Sign in with an X11 session to track.
-- **macOS needs Accessibility for titles.** Without the grant, Tally still tracks which app is in front, but window titles and website names stay empty. The app is ad-hoc signed, so a new version may need the grant again. Safari is not supported: its history needs Full Disk Access.
+- **Linux needs an X11 session.** On Wayland, apps cannot read the active window, so screen-time reports tracking as unavailable and counts nothing. Sign in with an X11 session to track.
+- **macOS needs Accessibility for titles.** Without the grant, screen-time still tracks which app is in front, but window titles and website names stay empty. The app is ad-hoc signed, so a new version may need the grant again. Safari is not supported: its history needs Full Disk Access.
 - **Media detection is per app, not per tab.** A browser is credited while any session it owns is playing. A muted tab, a player that never registers with the Windows media transport, or a media addon that did not build all fall back to plain idle rules. Media sessions exist only on Windows.
 - **Media has a ceiling.** A video left playing in an empty room stops counting after two hours without any input, so an overnight player does not bill the whole night. Settings offers 30 minutes, 1, 2 or 4 hours, or Never.
 - **Website names are a heuristic.** A browser window is matched to a recent history entry by title. Private windows, cleared history, a page whose title changed after it loaded, or no recent visit all mean the browser time is counted but the site stays unnamed. No site is guessed from the URL bar.
