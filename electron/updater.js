@@ -1,8 +1,8 @@
 'use strict';
 
-// Keeps an installed Tally current from GitHub releases (electron-updater reads
+// Keeps an installed screen-time current from GitHub releases (electron-updater reads
 // the latest.yml each release carries). Updates download in the background and
-// install when Tally quits, or straight away from Settings or the tray.
+// install when screen-time quits, or straight away from Settings or the tray.
 //
 // This is the app's only network traffic: the release check and the installer
 // download. It runs only in a packaged build and only while the "Install
@@ -107,7 +107,7 @@ class Updater {
     });
   }
 
-  // Quits and runs the downloaded installer silently, then reopens Tally.
+  // Quits and runs the downloaded installer silently, then reopens screen-time.
   install() {
     if (this.state.status !== 'ready' || !this.updater) return false;
     app.isQuitting = true;

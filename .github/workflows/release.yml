@@ -113,8 +113,8 @@ jobs:
         with:
           name: windows
           path: |
-            dist/Tally-Setup-*.exe
-            dist/Tally-Setup-*.exe.blockmap
+            dist/screen-time-Setup-*.exe
+            dist/screen-time-Setup-*.exe.blockmap
             dist/latest.yml
           if-no-files-found: error
 
@@ -171,7 +171,7 @@ jobs:
 
       - name: Inspect the build
         run: |
-          codesign -dv --verbose=2 dist/mac-arm64/Tally.app 2>&1 || true
+          codesign -dv --verbose=2 dist/mac-arm64/screen-time.app 2>&1 || true
           ls -la dist
 
       - name: Upload the build
@@ -293,7 +293,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           # latest*.yml and the blockmaps are what installed copies read to update themselves.
           files: |
-            dist/Tally-Setup-*.exe
+            dist/screen-time-Setup-*.exe
             dist/latest.yml
             dist/*.dmg
             dist/*.zip

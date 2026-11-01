@@ -1,6 +1,6 @@
 {
-  "name": "tally-screen-time",
-  "productName": "Tally",
+  "name": "screen-time",
+  "productName": "screen-time",
   "version": "1.2.2",
   "description": "Local screen-time tracker: which app and which website took your day.",
   "author": "Screen",
@@ -36,7 +36,7 @@
   },
   "build": {
     "appId": "com.screengd.tally",
-    "productName": "Tally",
+    "productName": "screen-time",
     "copyright": "Copyright © 2026 Screen",
     "directories": {
       "buildResources": "build",
@@ -64,7 +64,7 @@
         }
       ],
       "icon": "build/icon.png",
-      "artifactName": "Tally-Setup-${version}.${ext}"
+      "artifactName": "screen-time-Setup-${version}.${ext}"
     },
     "mac": {
       "target": [
@@ -73,7 +73,7 @@
       ],
       "icon": "build/icon-1024.png",
       "category": "public.app-category.productivity",
-      "artifactName": "Tally-${version}-mac-${arch}.${ext}",
+      "artifactName": "screen-time-${version}-mac-${arch}.${ext}",
       "identity": "-",
       "hardenedRuntime": false
     },
@@ -84,7 +84,7 @@
       ],
       "icon": "build/icon-1024.png",
       "category": "Utility",
-      "artifactName": "Tally-${version}-linux-${arch}.${ext}",
+      "artifactName": "screen-time-${version}-linux-${arch}.${ext}",
       "maintainer": "Screen <228304862+screen-gd@users.noreply.github.com>",
       "synopsis": "Local screen-time tracker: which app and which website took your day."
     },
@@ -95,8 +95,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Tally",
-      "uninstallDisplayName": "Tally",
+      "shortcutName": "screen-time",
+      "uninstallDisplayName": "screen-time",
       "deleteAppDataOnUninstall": false
     },
     "publish": [

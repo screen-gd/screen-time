@@ -29,7 +29,7 @@ async function check(hidden, backend = false) {
   Object.assign(app, {
     requestSingleInstanceLock: () => true,
     whenReady: () => Promise.resolve(),
-    setAppUserModelId() {}, getPath: () => '.', setLoginItemSettings() {},
+    setAppUserModelId() {}, setName() {}, setPath() {}, getPath: () => require('node:os').tmpdir(), setLoginItemSettings() {},
     quit() { this.emit('before-quit'); },
   });
   let totalSeconds = 7200;
@@ -88,7 +88,7 @@ async function check(hidden, backend = false) {
   await tray.rightClick();
   assert(tray.shownMenu.some(item => item.label === 'Today: 3h 0m'));
   assert.equal(menu.filter(item => /^App /.test(item.label)).length, 3);
-  menu.find(item => item.label === 'Open Tally').click();
+  menu.find(item => item.label === 'Open screen-time').click();
   windows.at(-1).emit('ready-to-show');
   assert.equal(windows.at(-1).visible, true);
   await menu.find(item => item.label === 'Pause tracking').click();

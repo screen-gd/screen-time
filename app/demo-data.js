@@ -20,8 +20,8 @@
   const TODAY_APPS = [
     [CHROME, 'Google Chrome', 'How a mechanical watch works - YouTube', 8400],
     [CODE, 'Visual Studio Code', 'app.js - tally - Visual Studio Code', 2700],
-    [SLACK, 'Slack', 'Tally - #design - Slack', 1200],
-    [FIGMA, 'Figma', 'Tally app screens - Figma', 720],
+    [SLACK, 'Slack', 'screen-time - #design - Slack', 1200],
+    [FIGMA, 'Figma', 'screen-time app screens - Figma', 720],
     [SPOTIFY, 'Spotify', 'Ambient focus - playlist', 600],
     [TERMINAL, 'Terminal', 'pwsh - 120x32', 420],
     [NOTION, 'Notion', 'Weekly plan - Notion', 360],
@@ -35,10 +35,10 @@
     ['youtube.com', 'How a mechanical watch works - YouTube', 'Google Chrome', 3360],
     ['github.com', 'screen-time: pull requests - GitHub', 'Google Chrome', 1440],
     ['mail.google.com', 'Inbox (3) - Gmail', 'Google Chrome', 1200],
-    ['linear.app', 'Tally - Linear', 'Google Chrome', 900],
+    ['linear.app', 'screen-time - Linear', 'Google Chrome', 900],
     ['developer.mozilla.org', 'Intl.NumberFormat - MDN Web Docs', 'Google Chrome', 600],
     ['news.ycombinator.com', 'Hacker News', 'Google Chrome', 480],
-    ['figma.com', 'Tally app screens - Figma', 'Google Chrome', 180],
+    ['figma.com', 'screen-time app screens - Figma', 'Google Chrome', 180],
   ];
 
   // 07:00 to 17:00, in seconds

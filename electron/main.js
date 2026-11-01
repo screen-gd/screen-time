@@ -15,14 +15,13 @@ const ROOT = path.join(__dirname, '..');
 const DEMO = process.env.TALLY_DEMO === '1' || process.argv.includes('--demo');
 const SCREENSHOT = process.env.TALLY_SCREENSHOT || null;
 
-// A separate data folder (and single-instance lock) for test copies that run
-// beside an installed Tally.
-if (process.env.TALLY_USER_DATA) {
-  const dir = path.resolve(process.env.TALLY_USER_DATA);
-  // app.setPath throws when the directory does not exist.
-  fs.mkdirSync(dir, { recursive: true });
-  app.setPath('userData', dir);
-}
+// Keep existing history and settings in the original data folder after renaming.
+const dataDirectory = process.env.TALLY_USER_DATA
+  ? path.resolve(process.env.TALLY_USER_DATA)
+  : path.join(app.getPath('appData'), 'Tally');
+fs.mkdirSync(dataDirectory, { recursive: true });
+app.setPath('userData', dataDirectory);
+app.setName('screen-time');
 
 // Demo and screenshot runs must never touch the network; the startup gate and
 // the settings toggle both go through this.
@@ -156,7 +155,7 @@ function createWindow() {
     show: false,
     backgroundColor: '#080808',
     icon: path.join(ROOT, 'build', 'icon.png'),
-    title: 'Tally',
+    title: 'screen-time',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -211,7 +210,7 @@ function createTray() {
   const icon = nativeImage.createFromPath(path.join(ROOT, 'build',
     process.platform === 'darwin' ? 'trayTemplate.png' : 'tray-32.png'));
   tray = new Tray(icon);
-  tray.setToolTip('Tally - screen time');
+  tray.setToolTip('screen-time - screen time');
   let menu = null;
   const rebuild = async () => {
     let today;
@@ -231,7 +230,7 @@ function createTray() {
       return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m`;
     };
     const label = (name) => String(name).replace(/&/g, '&&');
-    tray.setToolTip(paused ? 'Tally - tracking paused' : 'Tally - tracking active');
+    tray.setToolTip(paused ? 'screen-time - tracking paused' : 'screen-time - tracking active');
     menu = Menu.buildFromTemplate([
       { label: paused ? 'Tracking paused' : status.error ? 'Tracking unavailable' : status.idle ? 'Tracking idle' : 'Tracking active', enabled: false },
       { label: unavailable ? 'Usage preview unavailable' : `Today: ${duration(today.totalSeconds)}`, enabled: false },
@@ -239,7 +238,7 @@ function createTray() {
       ...today.apps.slice(0, 3).map((entry) => ({ label: `${label(entry.name)}: ${duration(entry.seconds)}`, enabled: false })),
       ...(today.apps.length ? [] : [{ label: 'No activity recorded yet', enabled: false }]),
       { type: 'separator' },
-      { label: 'Open Tally', click: showWindow },
+      { label: 'Open screen-time', click: showWindow },
       {
         label: paused ? 'Resume tracking' : 'Pause tracking',
         click: async () => {
@@ -291,7 +290,7 @@ function applyLoginItem(settings) {
       app.setLoginItemSettings({
         openAtLogin: Boolean(settings.launchAtLogin),
         path: process.execPath,
-        // In dev, Electron needs the app folder as its first argument; a packaged Tally does not.
+        // In dev, Electron needs the app folder as its first argument; a packaged screen-time does not.
         args: app.isPackaged ? ['--hidden'] : [ROOT, '--hidden'],
       });
     } else if (process.platform === 'darwin') {
@@ -306,7 +305,7 @@ function applyLoginItem(settings) {
       const exe = process.env.APPIMAGE || process.execPath;
       const args = app.isPackaged ? '--hidden' : `${execArg(ROOT)} --hidden`;
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, `[Desktop Entry]\nType=Application\nName=Tally\nExec=${execArg(exe)} ${args}\nX-GNOME-Autostart-enabled=true\n`);
+      fs.writeFileSync(file, `[Desktop Entry]\nType=Application\nName=screen-time\nExec=${execArg(exe)} ${args}\nX-GNOME-Autostart-enabled=true\n`);
     }
   } catch (error) {
     console.error('[tally] could not set login item:', error.message);
@@ -329,7 +328,7 @@ function registerIpc() {
     if (settings.paused !== before.paused) {
       send('tally:changed', { at: Date.now() });
       if (rebuildTrayMenu) rebuildTrayMenu();
-      if (tray) tray.setToolTip(settings.paused ? 'Tally - tracking paused' : 'Tally - screen time');
+      if (tray) tray.setToolTip(settings.paused ? 'screen-time - tracking paused' : 'screen-time - screen time');
     }
     return { settings, tracking: result.tracking || tracker.getStatus() };
   });

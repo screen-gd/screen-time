@@ -472,7 +472,7 @@
         ? rows
         : listEmpty([snap.settings.paused
           ? 'Tracking is paused, so nothing is being recorded.'
-          : 'Nothing recorded yet today. Open an app and Tally will list it here.']));
+          : 'Nothing recorded yet today. Open an app and screen-time will list it here.']));
   }
 
   function siteList(data, snap) {
@@ -611,7 +611,7 @@
         : h('div', { class: 'table-empty' },
           listEmpty(['Nothing recorded in this range.', days === 1
             ? 'Today has only just started, or tracking is paused.'
-            : 'Try a shorter range, or leave Tally running in the tray.'])),
+            : 'Try a shorter range, or leave screen-time running in the tray.'])),
       apps.length && restSeconds > 0.5
         ? h('div', { class: 'trow other' },
           h('span', { class: 'idx num', text: String(Math.min(rows.length, 8) + 1).padStart(2, '0') }),
@@ -691,7 +691,7 @@
     let empty = null;
     if (!snap.settings.recordWebsites) {
       empty = listEmpty(
-        ['Website names are turned off.', 'Tally still counts every browser as an app. Names come only from local browser history.'],
+        ['Website names are turned off.', 'screen-time still counts every browser as an app. Names come only from local browser history.'],
         h('button', { class: 'link-btn', type: 'button', onclick: () => go('settings') }, 'Turn on website names'));
     } else if (!total) {
       empty = listEmpty(['No website time recorded in this range.', 'Website names come from the history file of the browser in front.']);
@@ -810,7 +810,7 @@
       groupHead('Recording'),
       switchRow('Record screen time', 'Pause any time from the sidebar. Nothing is deleted.', !settings.paused,
         () => saveSettings({ paused: !settings.paused })),
-      switchRow('Open Tally at login', 'Starts hidden in the tray when you sign in.', settings.launchAtLogin,
+      switchRow('Open screen-time at login', 'Starts hidden in the tray when you sign in.', settings.launchAtLogin,
         () => saveSettings({ launchAtLogin: !settings.launchAtLogin })),
       h('div', { class: 'fields' },
         fieldSelect('Sample every',
@@ -842,7 +842,7 @@
             h('div', { class: 'row-t', text: 'Window titles' }),
             h('div', { class: 'row-d', text: accessibility
               ? 'Allowed in System Settings › Privacy & Security › Accessibility.'
-              : 'Tally needs Accessibility access to read window titles, which is how it names websites.' })),
+              : 'screen-time needs Accessibility access to read window titles, which is how it names websites.' })),
           accessibility
             ? null
             : h('div', { class: 'row-r' },
@@ -941,17 +941,17 @@
     const about = h('section', { class: 'group slab', id: 'group-about' },
       groupHead('About'),
       h('p', { class: 'about', text: update.supported
-        ? 'Tally keeps one JSON file on this computer. No account and no upload. Its only network traffic is for updates: checking GitHub for a new version and downloading it, and only while updates are on.'
-        : 'Tally keeps one JSON file on this computer. No account, no upload, no network requests.' }),
+        ? 'screen-time keeps one JSON file on this computer. No account and no upload. Its only network traffic is for updates: checking GitHub for a new version and downloading it, and only while updates are on.'
+        : 'screen-time keeps one JSON file on this computer. No account, no upload, no network requests.' }),
       update.supported
         ? [
-          switchRow('Install updates automatically', 'Downloads new versions from GitHub and installs them when Tally quits.',
+          switchRow('Install updates automatically', 'Downloads new versions from GitHub and installs them when screen-time quits.',
             settings.autoUpdate !== false, () => saveSettings({ autoUpdate: settings.autoUpdate === false })),
           updateRow(update),
         ]
         : null,
       h('div', { class: 'about-meta' },
-        h('span', { class: 'num', text: `Tally ${system.version}` }),
+        h('span', { class: 'num', text: `screen-time ${system.version}` }),
         h('span', { class: 'num', text: platform })),
       h('div', { class: 'about-path num', text: system.dataPath }),
       h('div', { class: 'about-actions' },
@@ -990,10 +990,10 @@
     switch (update.status) {
       case 'checking': return { title: 'Checking for updates…' };
       case 'downloading': return { title: `Downloading ${update.version || 'update'}`, detail: `${update.percent || 0}%` };
-      case 'ready': return { title: `Version ${update.version} is ready`, detail: 'It installs when Tally quits, or restart now.' };
-      case 'current': return { title: 'Tally is up to date', detail: checked };
+      case 'ready': return { title: `Version ${update.version} is ready`, detail: 'It installs when screen-time quits, or restart now.' };
+      case 'current': return { title: 'screen-time is up to date', detail: checked };
       case 'error': return { title: 'Couldn’t check for updates', detail: update.error || checked };
-      default: return update.enabled ? { title: 'Updates are on', detail: 'The first check runs shortly after Tally starts.' } : null;
+      default: return update.enabled ? { title: 'Updates are on', detail: 'The first check runs shortly after screen-time starts.' } : null;
     }
   }
 
@@ -1136,7 +1136,7 @@
     idle: { label: 'Idle', dot: false, why: 'No time added. Counting starts again on input.' },
     limit: { label: 'Media limit reached', dot: false, why: 'Media kept playing without input. Counting resumes when you touch the keyboard.' },
     paused: { label: 'Paused', dot: false, why: 'Nothing is being recorded. Resume when you want totals again.' },
-    self: { label: 'Tally in front', dot: false, why: 'Tally is in front now, and is never counted.' },
+    self: { label: 'screen-time in front', dot: false, why: 'screen-time is in front now, and is never counted.' },
     starting: { label: 'Starting', dot: false, why: 'Reading the app in front.' },
     unsupported: { label: 'Tracking unavailable', dot: false, why: 'Tracking isn’t available on this system.' },
     error: { label: 'Not recording', dot: false, why: 'The last read did not work.' },
