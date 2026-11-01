@@ -7,16 +7,21 @@
   "main": "electron/main.js",
   "private": true,
   "scripts": {
-    "start": "node scripts/build-native.js && electron .",
+    "start": "node scripts/build-native.js && npm run backend:build && electron .",
     "demo": "electron . --demo",
     "native": "node scripts/build-native.js",
+    "backend:build": "node scripts/build-backend.js",
+    "backend:start": "node scripts/build-backend.js && node scripts/run-backend.js",
+    "benchmark": "node scripts/benchmark.js",
     "make-icons": "node scripts/make-icons.js",
     "icons": "node scripts/fetch-icons.js",
     "dither": "node scripts/make-dither.js",
     "check": "node scripts/koffi-test.js",
     "test": "node scripts/tracker-test.js",
-    "dist": "node scripts/build-native.js && electron-builder --win nsis --publish never",
-    "dist:dir": "node scripts/build-native.js && electron-builder --dir"
+    "dist": "node scripts/build-native.js && npm run backend:build && electron-builder --win nsis --publish never",
+    "dist:dir": "node scripts/build-native.js && npm run backend:build && electron-builder --dir",
+    "dist:mac": "node scripts/build-native.js && npm run backend:build && electron-builder --mac --publish never",
+    "dist:linux": "node scripts/build-native.js && npm run backend:build && electron-builder --linux --publish never"
   },
   "dependencies": {
     "electron-updater": "^6.8.11",
@@ -40,12 +45,14 @@
     "files": [
       "electron/**/*",
       "app/**/*",
+      "backend/tally-backend*",
       "build/*.png",
       "native/media/build/Release/*.node",
       "package.json"
     ],
     "asarUnpack": [
-      "native/media/build/Release/*.node"
+      "native/media/build/Release/*.node",
+      "backend/tally-backend*"
     ],
     "win": {
       "target": [
@@ -58,6 +65,28 @@
       ],
       "icon": "build/icon.png",
       "artifactName": "Tally-Setup-${version}.${ext}"
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] },
+        { "target": "zip", "arch": ["arm64", "x64"] }
+      ],
+      "icon": "build/icon-1024.png",
+      "category": "public.app-category.productivity",
+      "artifactName": "Tally-${version}-mac-${arch}.${ext}",
+      "identity": "-",
+      "hardenedRuntime": false
+    },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb", "arch": ["x64"] }
+      ],
+      "icon": "build/icon-1024.png",
+      "category": "Utility",
+      "artifactName": "Tally-${version}-linux-${arch}.${ext}",
+      "maintainer": "Screen <228304862+screen-gd@users.noreply.github.com>",
+      "synopsis": "Local screen-time tracker: which app and which website took your day."
     },
     "nsis": {
       "oneClick": false,

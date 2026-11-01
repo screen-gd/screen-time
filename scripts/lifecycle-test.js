@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 
-async function check(hidden) {
+async function check(hidden, backend = false) {
   const windows = [];
   let tray;
   let menu;
@@ -36,6 +36,10 @@ async function check(hidden) {
   const store = {
     settings: { paused: false },
     load() { return this; },
+    pendingRecords: Promise.resolve(),
+    connect() { return this; },
+    sendTracking() {},
+    async range() { return this.aggregate(); },
     aggregate: () => ({ totalSeconds, apps: [1, 2, 3, 4].map(n => ({ name: `App ${n}`, seconds: 600 * n })) }),
     updateSettings(patch) { return Object.assign(this.settings, patch); },
     flush() {},
@@ -50,9 +54,9 @@ async function check(hidden) {
       setContextMenu(value) { this.contextMenu = value; }
       popUpContextMenu(value) { this.opened = true; this.shownMenu = value || this.contextMenu; }
       // Windows opens attached menus directly instead of emitting right-click.
-      rightClick() {
+      async rightClick() {
         if (this.contextMenu) this.popUpContextMenu();
-        else this.emit('right-click');
+        else await this.listeners('right-click')[0]();
       }
     },
   };
@@ -61,28 +65,33 @@ async function check(hidden) {
     './tracker/store': { Store: class { constructor() { return store; } } },
     './tracker': { Tracker: class extends EventEmitter { start() {} stop() { stopped = true; } getStatus() { return {}; } } },
     './tracker/browsers': {},
+    './backend-client': {
+      BackendStore: class { constructor() { return store; } },
+      async startBackend() { if (!backend) throw Error('Local store test'); return { baseUrl: 'http://localhost' }; },
+      stopBackend() {},
+    },
     './updater': { Updater: class { constructor() { this.state = {}; } } },
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8'), {
     require: name => mocks[name] || require(name),
     __dirname: path.join(__dirname, '../electron'),
     process: { env: {}, argv: hidden ? ['--hidden'] : [], platform: 'win32', execPath: 'electron' },
-    setTimeout, console,
+    setTimeout, setInterval: () => ({ unref() {} }), clearInterval() {}, console,
   });
-  await Promise.resolve();
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(windows.length, hidden ? 0 : 1);
   if (!hidden) { windows[0].close(); assert.equal(stopped, false); }
-  tray.rightClick();
+  await tray.rightClick();
   assert.equal(tray.opened, true);
   assert(tray.shownMenu.some(item => item.label === 'Today: 2h 0m'));
   totalSeconds = 10800;
-  tray.rightClick();
+  await tray.rightClick();
   assert(tray.shownMenu.some(item => item.label === 'Today: 3h 0m'));
   assert.equal(menu.filter(item => /^App /.test(item.label)).length, 3);
   menu.find(item => item.label === 'Open Tally').click();
   windows.at(-1).emit('ready-to-show');
   assert.equal(windows.at(-1).visible, true);
-  menu.find(item => item.label === 'Pause tracking').click();
+  await menu.find(item => item.label === 'Pause tracking').click();
   assert.equal(store.settings.paused, true);
   assert(menu.some(item => item.label === 'Resume tracking'));
   menu.find(item => item.label === 'Quit').click();
@@ -92,6 +101,8 @@ async function check(hidden) {
 (async () => {
   await check(false);
   await check(true);
+  await check(false, true);
+  await check(true, true);
   console.log('Window and tray lifecycle checks passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
 

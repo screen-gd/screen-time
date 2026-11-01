@@ -754,7 +754,11 @@
     const saved = Date.now() - state.savedAt < 2600;
     const platform = system.platform === 'win32'
       ? `Windows${system.arch ? ` ${system.arch === 'x64' ? 'x64' : system.arch}` : ''}`
-      : (system.platform || 'Desktop');
+      : system.platform === 'darwin'
+        ? `macOS${system.arch ? ` ${system.arch}` : ''}`
+        : system.platform === 'linux'
+          ? `Linux${system.arch ? ` ${system.arch}` : ''}`
+          : (system.platform || 'Desktop');
 
     const header = pageHead({
       title: 'Settings',
@@ -826,10 +830,31 @@
         : 'Playing media keeps counting without input until this limit.' }),
       diagnostics);
 
+    const accessibility = system.platform === 'darwin' ? (system.permissions && system.permissions.accessibility) : null;
+
     const websites = h('section', { class: 'group slab', id: 'group-websites' },
       groupHead('Websites', plural(installed.length, 'browser', 'browsers')),
       switchRow('Record website names', 'Matched from each browser’s local history. Nothing is uploaded.',
         settings.recordWebsites, () => saveSettings({ recordWebsites: !settings.recordWebsites })),
+      system.platform === 'darwin'
+        ? h('div', { class: 'row' },
+          h('div', null,
+            h('div', { class: 'row-t', text: 'Window titles' }),
+            h('div', { class: 'row-d', text: accessibility
+              ? 'Allowed in System Settings › Privacy & Security › Accessibility.'
+              : 'Tally needs Accessibility access to read window titles, which is how it names websites.' })),
+          accessibility
+            ? null
+            : h('div', { class: 'row-r' },
+              h('button', {
+                class: 'btn',
+                type: 'button',
+                onclick: async () => {
+                  await api.requestAccessibility();
+                  await refresh();
+                },
+              }, 'Allow…')))
+        : null,
       installed.length
         ? h('div', { class: 'browsers' }, installed.map((browser) => h('label', { class: 'browser' },
           h('input', {
@@ -916,8 +941,8 @@
     const about = h('section', { class: 'group slab', id: 'group-about' },
       groupHead('About'),
       h('p', { class: 'about', text: update.supported
-        ? 'Tally keeps one JSON file on this PC. No account and no upload. Its only network request checks GitHub for a new version, and only while updates are on.'
-        : 'Tally keeps one JSON file on this PC. No account, no upload, no network requests.' }),
+        ? 'Tally keeps one JSON file on this computer. No account and no upload. Its only network traffic is for updates: checking GitHub for a new version and downloading it, and only while updates are on.'
+        : 'Tally keeps one JSON file on this computer. No account, no upload, no network requests.' }),
       update.supported
         ? [
           switchRow('Install updates automatically', 'Downloads new versions from GitHub and installs them when Tally quits.',
@@ -1113,7 +1138,7 @@
     paused: { label: 'Paused', dot: false, why: 'Nothing is being recorded. Resume when you want totals again.' },
     self: { label: 'Tally in front', dot: false, why: 'Tally is in front now, and is never counted.' },
     starting: { label: 'Starting', dot: false, why: 'Reading the app in front.' },
-    unsupported: { label: 'Tracking unavailable', dot: false, why: 'Screen-time tracking currently runs on Windows.' },
+    unsupported: { label: 'Tracking unavailable', dot: false, why: 'Tracking isn’t available on this system.' },
     error: { label: 'Not recording', dot: false, why: 'The last read did not work.' },
   };
 
@@ -1129,7 +1154,7 @@
     const reason = reasonOf(tracking, snap.settings);
     const base = STATES[reason] || STATES.starting;
     const why = reason === 'recording' && state.route === 'sites' && snap.settings.recordWebsites
-      ? 'Titles are read here on this PC.'
+      ? 'Titles are read here on this computer.'
       : reason === 'recording' && tracking.app
         ? `${shortName(tracking.app)} is in front. Time is being added.`
         : reason === 'media' && tracking.app
@@ -1138,7 +1163,9 @@
             ? `${snap.settings.mediaCeilingMinutes == null ? 'The media limit is reached.' : `Media played for ${mediaCeilingLabel(snap.settings.mediaCeilingMinutes)} without input.`} Counting resumes when you touch the keyboard.`
             : reason === 'error' && tracking.error
               ? tracking.error
-              : base.why;
+              : reason === 'unsupported' && tracking.error
+                ? tracking.error
+                : base.why;
     const label = reason === 'self'
       ? (() => {
           const counted = lastCountedName(snap.today) || tracking.app;
@@ -1394,6 +1421,7 @@
       },
       openDataFolder: async () => true,
       rescanBrowsers: async () => browserList,
+      requestAccessibility: async () => false,
       installUpdate: async () => false,
       checkForUpdates: async () => snapshot().system.update,
       onChanged: () => () => {},

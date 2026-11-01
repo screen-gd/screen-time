@@ -1,12 +1,17 @@
 'use strict';
 
 const { EventEmitter } = require('node:events');
-const { readForeground } = require('./window');
-const { appName, browserFor, cleanBrowserTitle } = require('./apps');
+const windowModule = require('./window');
+const { identify, cleanBrowserTitle } = require('./apps');
 const browsers = require('./browsers');
 const media = require('./media');
 
-const IGNORED_EXES = new Set(['logonui.exe', 'lockapp.exe', 'screensaver.scr', 'searchhost.exe', 'shellexperiencehost.exe']);
+// The lock screen and friends carry no app name on any OS; macOS names them
+// loginwindow.app and ScreenSaverEngine.app.
+const IGNORED_EXES = new Set([
+  'logonui.exe', 'lockapp.exe', 'screensaver.scr', 'searchhost.exe', 'shellexperiencehost.exe',
+  'loginwindow.app', 'screensaverengine.app', 'loginwindow', 'screensaverengine',
+]);
 
 // Once nothing is being counted, the loop drops to this cadence. One cheap read
 // every twenty seconds is enough to notice a video starting or a hand on a key.
@@ -21,13 +26,17 @@ const DEFAULT_MEDIA_CEILING_MINUTES = 120;
 const MAX_TRUSTED_GAP_S = 120;
 
 class Tracker extends EventEmitter {
-  // `readWindow` and `mediaSignal` are injectable so the sampling rules can be
-  // exercised without a real desktop; main.js passes neither.
-  constructor({ store, readWindow = readForeground, mediaSignal = media } = {}) {
+  // `readWindow`, `mediaSignal` and `support` are injectable so the sampling
+  // rules can be exercised without a real desktop; main.js passes neither.
+  constructor({ store, readWindow = windowModule.readForeground, mediaSignal = media, support = windowModule.support } = {}) {
     super();
     this.store = store;
     this.readWindow = readWindow;
     this.mediaSignal = mediaSignal;
+    this.support = support;
+    let caps = { supported: false, message: null };
+    try { caps = support() || caps; } catch { caps = { supported: false, message: null }; }
+    this.unsupportedMessage = caps.message || null;
     this.timer = null;
     this.lastSampleAt = null;
     this.lastCreditedAt = null;
@@ -38,7 +47,7 @@ class Tracker extends EventEmitter {
     this.running = false;
     this.busy = false;
     this.status = {
-      supported: process.platform === 'win32',
+      supported: Boolean(caps.supported),
       lastSampleAt: null,
       app: null,
       site: null,
@@ -48,6 +57,7 @@ class Tracker extends EventEmitter {
       media: false,
       mediaSessions: null,
       mediaAvailable: mediaSignal.available ? mediaSignal.available() : false,
+      accessibility: process.platform === 'darwin' ? false : null,
       reason: 'starting',
       error: null,
     };
@@ -63,7 +73,7 @@ class Tracker extends EventEmitter {
     this.mediaSince = null;
     this.schedule(300);
     if (!this.status.supported) {
-      this.status.error = 'Foreground-app tracking currently runs on Windows.';
+      this.status.error = this.unsupportedMessage;
     }
   }
 
@@ -176,6 +186,9 @@ class Tracker extends EventEmitter {
 
     try {
       const settings = this.store.settings;
+      // The Accessibility grant can change while Tally runs; the sidebar and
+      // Settings reflect it on every tick. null off macOS.
+      this.status.accessibility = process.platform === 'darwin' ? Boolean(windowModule.accessibilityTrusted()) : null;
       const foreground = this.readWindow();
       if (!foreground) {
         this.status.lastSampleAt = now;
@@ -263,8 +276,7 @@ class Tracker extends EventEmitter {
       this.lastCreditedAt = now;
       if (!(seconds > 0.2)) return;
 
-      const browser = browserFor(foreground.exePath);
-      const name = appName(foreground.exePath);
+      const { name, browser } = identify(foreground);
       const appKey = foreground.exePath.toLowerCase();
       this.status.app = name;
 

@@ -1,13 +1,15 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, Menu, shell, Tray, nativeImage, powerMonitor, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, shell, Tray, nativeImage, powerMonitor, nativeTheme, systemPreferences } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const os = require('node:os');
 
 const { Store } = require('./tracker/store');
 const { Tracker } = require('./tracker');
 const browsers = require('./tracker/browsers');
 const { Updater } = require('./updater');
+const { BackendStore, startBackend, stopBackend } = require('./backend-client');
 
 const ROOT = path.join(__dirname, '..');
 const DEMO = process.env.TALLY_DEMO === '1' || process.argv.includes('--demo');
@@ -15,7 +17,16 @@ const SCREENSHOT = process.env.TALLY_SCREENSHOT || null;
 
 // A separate data folder (and single-instance lock) for test copies that run
 // beside an installed Tally.
-if (process.env.TALLY_USER_DATA) app.setPath('userData', path.resolve(process.env.TALLY_USER_DATA));
+if (process.env.TALLY_USER_DATA) {
+  const dir = path.resolve(process.env.TALLY_USER_DATA);
+  // app.setPath throws when the directory does not exist.
+  fs.mkdirSync(dir, { recursive: true });
+  app.setPath('userData', dir);
+}
+
+// Demo and screenshot runs must never touch the network; the startup gate and
+// the settings toggle both go through this.
+const updatesAllowed = (settings) => settings.autoUpdate && !DEMO && !SCREENSHOT;
 let win = null;
 let tray = null;
 let store = null;
@@ -23,6 +34,9 @@ let tracker = null;
 let updater = null;
 let changeTimer = null;
 let rebuildTrayMenu = null;
+let backendRuntime = null;
+let remoteBackend = false;
+let trackingHeartbeat = null;
 
 function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -60,7 +74,7 @@ function demoNow() {
   return date;
 }
 
-function snapshot() {
+function localSnapshot() {
   const now = DEMO ? demoNow() : new Date();
   const today = store.aggregate(1);
   const yesterdayDate = new Date(now);
@@ -91,7 +105,8 @@ function snapshot() {
       version: app.getVersion(),
       dataPath: store.file,
       browserList: DEMO ? demoBrowserList() : browsers.browserAvailability(),
-      supported: process.platform === 'win32',
+      supported: tracker.status.supported,
+      permissions: { accessibility: tracker.status.accessibility },
       startedAt: store.data.createdAt,
       update: updater ? updater.getState() : { supported: false, enabled: false, status: 'idle' },
       storedDays: storedKeys.length,
@@ -111,6 +126,21 @@ function showWindow() {
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+}
+
+async function snapshot() {
+  if (!remoteBackend) return localSnapshot();
+  const result = await store.snapshot();
+  result.tracking = { ...result.tracking, ...tracker.getStatus(), paused: store.settings.paused, sampling: store.settings.sampleSeconds, demo: false };
+  result.system = {
+    ...result.system,
+    version: app.getVersion(),
+    browserList: browsers.browserAvailability(),
+    supported: tracker.status.supported,
+    permissions: { accessibility: tracker.status.accessibility },
+    update: updater ? updater.getState() : result.system.update,
+  };
+  return result;
 }
 
 function createWindow() {
@@ -140,7 +170,7 @@ function createWindow() {
   win.loadFile(path.join(ROOT, 'app', 'index.html'),
     SCREENSHOT && process.env.TALLY_ROUTE ? { hash: `/${process.env.TALLY_ROUTE}` } : undefined);
   win.once('ready-to-show', () => {
-    if (!process.argv.includes('--hidden') && !SCREENSHOT) win.show();
+    if (!process.argv.includes('--hidden') && !SCREENSHOT && !openedAtLogin()) win.show();
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url)) shell.openExternal(url);
@@ -176,13 +206,25 @@ function createWindow() {
 }
 
 function createTray() {
-  const icon = nativeImage.createFromPath(path.join(ROOT, 'build', 'tray-32.png'));
+  // macOS wants a template image so the menu bar can tint it; Electron picks
+  // up trayTemplate@2x.png for Retina itself.
+  const icon = nativeImage.createFromPath(path.join(ROOT, 'build',
+    process.platform === 'darwin' ? 'trayTemplate.png' : 'tray-32.png'));
   tray = new Tray(icon);
   tray.setToolTip('Tally - screen time');
   let menu = null;
-  const rebuild = () => {
+  const rebuild = async () => {
+    let today;
+    let unavailable = false;
+    try {
+      if (remoteBackend) await store.pendingRecords;
+      today = remoteBackend ? await store.range(1) : store.aggregate(1);
+    } catch (error) {
+      unavailable = true;
+      today = { totalSeconds: 0, apps: [] };
+      console.error('[tally] tray preview unavailable:', error.message);
+    }
     const paused = store.settings.paused;
-    const today = store.aggregate(1);
     const status = tracker.getStatus();
     const duration = (seconds) => {
       const minutes = Math.floor(seconds / 60);
@@ -192,7 +234,7 @@ function createTray() {
     tray.setToolTip(paused ? 'Tally - tracking paused' : 'Tally - tracking active');
     menu = Menu.buildFromTemplate([
       { label: paused ? 'Tracking paused' : status.error ? 'Tracking unavailable' : status.idle ? 'Tracking idle' : 'Tracking active', enabled: false },
-      { label: `Today: ${duration(today.totalSeconds)}`, enabled: false },
+      { label: unavailable ? 'Usage preview unavailable' : `Today: ${duration(today.totalSeconds)}`, enabled: false },
       { label: 'Most used apps today', enabled: false },
       ...today.apps.slice(0, 3).map((entry) => ({ label: `${label(entry.name)}: ${duration(entry.seconds)}`, enabled: false })),
       ...(today.apps.length ? [] : [{ label: 'No activity recorded yet', enabled: false }]),
@@ -200,9 +242,9 @@ function createTray() {
       { label: 'Open Tally', click: showWindow },
       {
         label: paused ? 'Resume tracking' : 'Pause tracking',
-        click: () => {
-          const settings = store.updateSettings({ paused: !paused });
-          if (settings) rebuild();
+        click: async () => {
+          await store.updateSettings({ paused: !store.settings.paused });
+          await rebuild();
           send('tally:changed', { at: Date.now() });
         },
       },
@@ -212,28 +254,60 @@ function createTray() {
       { type: 'separator' },
       { label: 'Quit', click: () => { app.isQuitting = true; app.quit(); } },
     ]);
+    if (process.platform === 'linux') tray.setContextMenu(menu);
   };
   rebuild();
   rebuildTrayMenu = rebuild;
   // Keep the menu unattached: Windows suppresses right-click with setContextMenu.
   // Build from current tracking data each time the menu opens.
-  tray.on('right-click', () => {
-    rebuild();
+  tray.on('right-click', async () => {
+    await rebuild();
     tray.popUpContextMenu(menu);
   });
   tray.on('click', showWindow);
   tray.on('double-click', showWindow);
 }
 
-function applyLoginItem(settings) {
-  if (process.platform !== 'win32') return;
+// macOS login items take no arguments, so a login launch can't carry
+// --hidden; the login-item record says whether this launch was one.
+function openedAtLogin() {
   try {
-    app.setLoginItemSettings({
-      openAtLogin: Boolean(settings.launchAtLogin),
-      path: process.execPath,
-      // In dev, Electron needs the app folder as its first argument; a packaged Tally does not.
-      args: app.isPackaged ? ['--hidden'] : [ROOT, '--hidden'],
-    });
+    const settings = app.getLoginItemSettings();
+    return Boolean(settings && (settings.wasOpenedAtLogin || settings.wasOpenedAsHidden));
+  } catch {
+    return false;
+  }
+}
+
+// A quoted Exec argument escapes ", `, $ and \ with a backslash, and a
+// literal % is written %% (a bare % starts a field code).
+function execArg(value) {
+  return `"${String(value).replace(/[\\"`$]/g, '\\$&').replace(/%/g, '%%')}"`;
+}
+
+function applyLoginItem(settings) {
+  try {
+    if (process.platform === 'win32') {
+      app.setLoginItemSettings({
+        openAtLogin: Boolean(settings.launchAtLogin),
+        path: process.execPath,
+        // In dev, Electron needs the app folder as its first argument; a packaged Tally does not.
+        args: app.isPackaged ? ['--hidden'] : [ROOT, '--hidden'],
+      });
+    } else if (process.platform === 'darwin') {
+      app.setLoginItemSettings({ openAtLogin: Boolean(settings.launchAtLogin) });
+    } else if (process.platform === 'linux') {
+      // Linux has no login-item API; an autostart .desktop file is the convention.
+      const file = path.join(os.homedir(), '.config', 'autostart', 'tally.desktop');
+      if (!settings.launchAtLogin) {
+        fs.rmSync(file, { force: true });
+        return;
+      }
+      const exe = process.env.APPIMAGE || process.execPath;
+      const args = app.isPackaged ? '--hidden' : `${execArg(ROOT)} --hidden`;
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `[Desktop Entry]\nType=Application\nName=Tally\nExec=${execArg(exe)} ${args}\nX-GNOME-Autostart-enabled=true\n`);
+    }
   } catch (error) {
     console.error('[tally] could not set login item:', error.message);
   }
@@ -241,25 +315,26 @@ function applyLoginItem(settings) {
 
 function registerIpc() {
   ipcMain.handle('tally:snapshot', () => snapshot());
-  ipcMain.handle('tally:range', (_event, days) => {
+  ipcMain.handle('tally:range', async (_event, days) => {
     const count = [1, 7, 30].includes(Number(days)) ? Number(days) : 1;
-    return store.aggregate(count);
+    return remoteBackend ? store.range(count) : store.aggregate(count);
   });
-  ipcMain.handle('tally:settings:update', (_event, patch) => {
+  ipcMain.handle('tally:settings:update', async (_event, patch) => {
     const before = { ...store.settings };
-    const settings = store.updateSettings(patch && typeof patch === 'object' ? patch : {});
+    const result = await store.updateSettings(patch && typeof patch === 'object' ? patch : {});
+    const settings = result.settings || result;
     if (settings.launchAtLogin !== before.launchAtLogin) applyLoginItem(settings);
-    if (settings.autoUpdate !== before.autoUpdate && updater) updater.setEnabled(settings.autoUpdate);
+    if (settings.autoUpdate !== before.autoUpdate && updater) updater.setEnabled(updatesAllowed(settings));
     if (settings.sampleSeconds !== before.sampleSeconds) tracker.restart();
     if (settings.paused !== before.paused) {
       send('tally:changed', { at: Date.now() });
       if (rebuildTrayMenu) rebuildTrayMenu();
       if (tray) tray.setToolTip(settings.paused ? 'Tally - tracking paused' : 'Tally - screen time');
     }
-    return { settings, tracking: tracker.getStatus() };
+    return { settings, tracking: result.tracking || tracker.getStatus() };
   });
-  ipcMain.handle('tally:clear', () => {
-    store.clear();
+  ipcMain.handle('tally:clear', async () => {
+    await store.clear();
     store.flush();
     send('tally:changed', { at: Date.now() });
     return true;
@@ -277,6 +352,11 @@ function registerIpc() {
     browsers.discoverProfiles(true);
     return browsers.browserAvailability();
   });
+  ipcMain.handle('tally:permissions:accessibility', () => {
+    // Prompts macOS for the Accessibility grant on first call, then reports it.
+    if (process.platform !== 'darwin' || typeof systemPreferences.isTrustedAccessibilityClient !== 'function') return false;
+    return Boolean(systemPreferences.isTrustedAccessibilityClient(true));
+  });
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -284,11 +364,27 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on('second-instance', showWindow);
 
-  app.whenReady().then(() => {
-    app.setAppUserModelId('com.tally.screentime');
-    Menu.setApplicationMenu(null);
+  app.whenReady().then(async () => {
+    if (process.platform === 'win32') app.setAppUserModelId('com.tally.screentime');
+    // macOS needs a real menu bar for Cmd+Q/C/V to work; other OSes hide it.
+    Menu.setApplicationMenu(process.platform === 'darwin'
+      ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }])
+      : null);
 
-    store = new Store(path.join(app.getPath('userData'), 'tally-data.json')).load();
+    const dataFile = path.join(app.getPath('userData'), 'tally-data.json');
+    if (!DEMO) {
+      try {
+        backendRuntime = await startBackend({ root: ROOT, dataFile, frontendDir: app.isPackaged ? '' : path.join(ROOT, 'app') });
+        store = await new BackendStore({ baseUrl: backendRuntime.baseUrl, token: backendRuntime.token, file: dataFile }).connect();
+        remoteBackend = true;
+        console.log('[tally] using Go backend at', backendRuntime.baseUrl);
+      } catch (error) {
+        console.error('[tally] Go backend unavailable, using local store:', error.message);
+        stopBackend(backendRuntime && backendRuntime.process);
+        backendRuntime = null;
+      }
+    }
+    if (!store) store = new Store(dataFile).load();
     if (DEMO) {
       const demo = require('../app/demo-data.js');
       store.loadDemo(demo.buildDays(30));
@@ -300,7 +396,7 @@ if (!app.requestSingleInstanceLock()) {
     // new status or every tenth percent.
     let lastUpdate = { status: null, percent: -10 };
     updater = new Updater({
-      enabled: store.settings.autoUpdate && !DEMO && !SCREENSHOT,
+      enabled: updatesAllowed(store.settings),
       onChange: (state) => {
         const statusChanged = state.status !== lastUpdate.status;
         if (!statusChanged && Math.abs(state.percent - lastUpdate.percent) < 10) return;
@@ -311,7 +407,10 @@ if (!app.requestSingleInstanceLock()) {
     });
 
     tracker = new Tracker({ store });
-    tracker.on('change', broadcast);
+    tracker.on('change', () => {
+      broadcast();
+      if (remoteBackend) store.sendTracking(tracker.getStatus());
+    });
     if (!DEMO && !SCREENSHOT) tracker.start();
     else if (DEMO) {
       tracker.status.lastSampleAt = demoNow().getTime();
@@ -324,6 +423,11 @@ if (!app.requestSingleInstanceLock()) {
       tracker.status.mediaSessions = 2;
       tracker.status.mediaAvailable = true;
     }
+    if (remoteBackend) store.sendTracking(tracker.getStatus());
+    if (remoteBackend) {
+      trackingHeartbeat = setInterval(() => store.sendTracking(tracker.getStatus()), 10000);
+      if (trackingHeartbeat.unref) trackingHeartbeat.unref();
+    }
 
     // Stop the sampler outright while the screen is locked or the machine sleeps,
     // and pick it up again without crediting the gap.
@@ -334,7 +438,7 @@ if (!app.requestSingleInstanceLock()) {
 
     applyLoginItem(store.settings);
     registerIpc();
-    if (!process.argv.includes('--hidden') || SCREENSHOT) createWindow();
+    if ((!process.argv.includes('--hidden') && !(process.platform === 'darwin' && openedAtLogin())) || SCREENSHOT) createWindow();
     createTray();
 
     app.on('activate', showWindow);
@@ -347,6 +451,8 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', () => {
     app.isQuitting = true;
     if (tracker) tracker.stop();
+    if (trackingHeartbeat) clearInterval(trackingHeartbeat);
     if (store) store.flush();
+    stopBackend(backendRuntime && backendRuntime.process);
   });
 }

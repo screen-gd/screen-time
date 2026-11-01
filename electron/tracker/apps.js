@@ -48,39 +48,148 @@ const NAMES = {
   'tally.exe': 'Tally',
 };
 
+const BROWSERS_BY_ID = {
+  chrome: { id: 'chrome', name: 'Google Chrome', family: 'chromium' },
+  chromium: { id: 'chromium', name: 'Chromium', family: 'chromium' },
+  edge: { id: 'edge', name: 'Microsoft Edge', family: 'chromium' },
+  brave: { id: 'brave', name: 'Brave', family: 'chromium' },
+  vivaldi: { id: 'vivaldi', name: 'Vivaldi', family: 'chromium' },
+  opera: { id: 'opera', name: 'Opera', family: 'chromium' },
+  'opera-gx': { id: 'opera-gx', name: 'Opera GX', family: 'chromium' },
+  arc: { id: 'arc', name: 'Arc', family: 'chromium' },
+  firefox: { id: 'firefox', name: 'Firefox', family: 'firefox' },
+  zen: { id: 'zen', name: 'Zen', family: 'firefox' },
+};
+
 const BROWSERS = {
-  'chrome.exe': { id: 'chrome', name: 'Google Chrome', family: 'chromium' },
-  'msedge.exe': { id: 'edge', name: 'Microsoft Edge', family: 'chromium' },
-  'brave.exe': { id: 'brave', name: 'Brave', family: 'chromium' },
-  'vivaldi.exe': { id: 'vivaldi', name: 'Vivaldi', family: 'chromium' },
-  'opera.exe': { id: 'opera', name: 'Opera', family: 'chromium' },
-  'opera_gx.exe': { id: 'opera-gx', name: 'Opera GX', family: 'chromium' },
-  'arc.exe': { id: 'arc', name: 'Arc', family: 'chromium' },
-  'firefox.exe': { id: 'firefox', name: 'Firefox', family: 'firefox' },
-  'zen.exe': { id: 'zen', name: 'Zen', family: 'firefox' },
+  'chrome.exe': BROWSERS_BY_ID.chrome,
+  'msedge.exe': BROWSERS_BY_ID.edge,
+  'brave.exe': BROWSERS_BY_ID.brave,
+  'vivaldi.exe': BROWSERS_BY_ID.vivaldi,
+  'opera.exe': BROWSERS_BY_ID.opera,
+  'opera_gx.exe': BROWSERS_BY_ID['opera-gx'],
+  'arc.exe': BROWSERS_BY_ID.arc,
+  'firefox.exe': BROWSERS_BY_ID.firefox,
+  'zen.exe': BROWSERS_BY_ID.zen,
+};
+
+// macOS apps are known by their bundle id, not by an executable name.
+const MAC_BROWSERS = {
+  'com.google.chrome': BROWSERS_BY_ID.chrome,
+  'org.chromium.chromium': BROWSERS_BY_ID.chromium,
+  'com.microsoft.edgemac': BROWSERS_BY_ID.edge,
+  'com.brave.browser': BROWSERS_BY_ID.brave,
+  'com.vivaldi.vivaldi': BROWSERS_BY_ID.vivaldi,
+  'com.operasoftware.opera': BROWSERS_BY_ID.opera,
+  'com.operasoftware.operagx': BROWSERS_BY_ID['opera-gx'],
+  'company.thebrowser.browser': BROWSERS_BY_ID.arc,
+  'org.mozilla.firefox': BROWSERS_BY_ID.firefox,
+  'app.zen-browser.zen': BROWSERS_BY_ID.zen,
+};
+
+// Linux browsers are known by the executable's basename. Snap and distro
+// builds rename the binary, so each id lists its flavours.
+const LINUX_BROWSERS = {
+  chrome: BROWSERS_BY_ID.chrome,
+  'google-chrome': BROWSERS_BY_ID.chrome,
+  chromium: BROWSERS_BY_ID.chromium,
+  'chromium-browser': BROWSERS_BY_ID.chromium,
+  msedge: BROWSERS_BY_ID.edge,
+  'microsoft-edge': BROWSERS_BY_ID.edge,
+  brave: BROWSERS_BY_ID.brave,
+  'brave-browser': BROWSERS_BY_ID.brave,
+  vivaldi: BROWSERS_BY_ID.vivaldi,
+  'vivaldi-bin': BROWSERS_BY_ID.vivaldi,
+  opera: BROWSERS_BY_ID.opera,
+  firefox: BROWSERS_BY_ID.firefox,
+  'firefox-bin': BROWSERS_BY_ID.firefox,
+  'firefox-esr': BROWSERS_BY_ID.firefox,
+  zen: BROWSERS_BY_ID.zen,
+  'zen-bin': BROWSERS_BY_ID.zen,
+};
+
+const LINUX_NAMES = {
+  chrome: 'Google Chrome',
+  'google-chrome': 'Google Chrome',
+  chromium: 'Chromium',
+  'chromium-browser': 'Chromium',
+  msedge: 'Microsoft Edge',
+  'microsoft-edge': 'Microsoft Edge',
+  brave: 'Brave',
+  'brave-browser': 'Brave',
+  vivaldi: 'Vivaldi',
+  'vivaldi-bin': 'Vivaldi',
+  opera: 'Opera',
+  firefox: 'Firefox',
+  'firefox-bin': 'Firefox',
+  'firefox-esr': 'Firefox ESR',
+  zen: 'Zen',
+  'zen-bin': 'Zen',
+  code: 'Visual Studio Code',
+  cursor: 'Cursor',
+  slack: 'Slack',
+  discord: 'Discord',
+  spotify: 'Spotify',
+  obsidian: 'Obsidian',
+  'telegram-desktop': 'Telegram',
+  'gnome-terminal-server': 'Terminal',
+  konsole: 'Konsole',
+  nautilus: 'Files',
+  dolphin: 'Dolphin',
+  steam: 'Steam',
+  zoom: 'Zoom',
+  tally: 'Tally',
 };
 
 function exeName(exePath) {
   return path.win32.basename(exePath || '').toLowerCase();
 }
 
+function titleCase(base) {
+  const stem = String(base || '').replace(/\.exe$/i, '').replace(/[-_]+/g, ' ');
+  return stem
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 function appName(exePath) {
   const base = exeName(exePath);
   if (!base) return 'Unknown app';
   if (NAMES[base]) return NAMES[base];
-  const stem = base.replace(/\.exe$/i, '').replace(/[-_]+/g, ' ');
-  return stem
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return titleCase(base);
 }
 
 function browserFor(exePath) {
   return BROWSERS[exeName(exePath)] || null;
 }
 
+// Turns a foreground read into the name shown and the browser profile to look
+// up. `platform` is a parameter so tests can run darwin/linux cases anywhere.
+function identify(foreground, platform = process.platform) {
+  const exePath = String(foreground && foreground.exePath || '');
+  if (platform === 'darwin') {
+    const bundleId = String(foreground.bundleId || '').toLowerCase();
+    const base = path.posix.basename(exePath).replace(/\.app$/i, '');
+    return { name: foreground.name || base || 'Unknown app', browser: MAC_BROWSERS[bundleId] || null };
+  }
+  if (platform === 'linux') {
+    const key = exePath.split(/[\\/]/).pop().toLowerCase();
+    let browser = LINUX_BROWSERS[key] || null;
+    let name = LINUX_NAMES[key];
+    // Snap and distro builds of Chromium ship a binary named chrome.
+    if (browser && browser.id === 'chrome' && exePath.toLowerCase().includes('chromium')) {
+      browser = BROWSERS_BY_ID.chromium;
+      name = 'Chromium';
+    }
+    return { name: name || (key ? titleCase(key) : 'Unknown app'), browser };
+  }
+  return { name: appName(exePath), browser: browserFor(exePath) };
+}
+
 // Window titles end with the browser's name and, with several profiles, the profile name.
 const TITLE_SUFFIXES = [
   /\s+[-–—]\s+Google Chrome$/i,
+  /\s+[-–—]\s+Chromium$/i,
   /\s+[-–—]\s+Microsoft Edge$/i,
   /\s+[-–—]\s+Mozilla Firefox$/i,
   /\s+[-–—]\s+Zen Browser$/i,
@@ -103,4 +212,4 @@ function cleanBrowserTitle(browser, title) {
   return out.replace(/^\(\d+\)\s*/, '').trim();
 }
 
-module.exports = { appName, exeName, browserFor, cleanBrowserTitle, BROWSERS, NAMES };
+module.exports = { appName, exeName, browserFor, identify, cleanBrowserTitle, BROWSERS, BROWSERS_BY_ID, MAC_BROWSERS, LINUX_BROWSERS, LINUX_NAMES, NAMES };

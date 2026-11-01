@@ -63,7 +63,7 @@ const strokes = [
   [7.2, 21.6, 24.8, 10.4],
 ];
 
-function render(size) {
+function render(size, template = false) {
   const ss = 4;
   const px = Buffer.alloc(size * size * 4);
   const scale = size / 32;
@@ -74,7 +74,8 @@ function render(size) {
         for (let sx = 0; sx < ss; sx++) {
           const ux = (x + (sx + 0.5) / ss) / scale;
           const uy = (y + (sy + 0.5) / ss) / scale;
-          const insidePaper = roundRect(ux, uy, 16, 16, 15, 15, 6.2) <= 0;
+          // Template icons are bare strokes on transparency, no paper square.
+          const insidePaper = template || roundRect(ux, uy, 16, 16, 15, 15, 6.2) <= 0;
           if (!insidePaper) continue;
           paper++;
           let insideInk = false;
@@ -85,11 +86,11 @@ function render(size) {
         }
       }
       const total = ss * ss;
-      const a = paper / total;
-      const inkFrac = paper ? ink / paper : 0;
-      const r = PAPER[0] * (1 - inkFrac) + INK[0] * inkFrac;
-      const g = PAPER[1] * (1 - inkFrac) + INK[1] * inkFrac;
-      const b = PAPER[2] * (1 - inkFrac) + INK[2] * inkFrac;
+      const a = template ? ink / total : paper / total;
+      const inkFrac = !template && paper ? ink / paper : 0;
+      const r = template ? 0 : PAPER[0] * (1 - inkFrac) + INK[0] * inkFrac;
+      const g = template ? 0 : PAPER[1] * (1 - inkFrac) + INK[1] * inkFrac;
+      const b = template ? 0 : PAPER[2] * (1 - inkFrac) + INK[2] * inkFrac;
       const i = (y * size + x) * 4;
       px[i] = Math.round(r); px[i + 1] = Math.round(g); px[i + 2] = Math.round(b);
       px[i + 3] = Math.round(a * 255);
@@ -102,4 +103,9 @@ for (const size of [16, 24, 32]) {
   fs.writeFileSync(path.join(OUT, `tray-${size}.png`), render(size));
 }
 fs.writeFileSync(path.join(OUT, 'icon.png'), render(256));
-console.log('Wrote build/icon.png and tray icons.');
+// macOS and Linux packaging want at least 512 px; the menu bar wants template
+// icons (black strokes, transparent background) it can tint per appearance.
+fs.writeFileSync(path.join(OUT, 'icon-1024.png'), render(1024));
+fs.writeFileSync(path.join(OUT, 'trayTemplate.png'), render(16, true));
+fs.writeFileSync(path.join(OUT, 'trayTemplate@2x.png'), render(32, true));
+console.log('Wrote build/icon.png, icon-1024.png, tray icons and macOS template icons.');

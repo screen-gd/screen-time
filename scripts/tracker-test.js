@@ -8,6 +8,8 @@
 
 const assert = require('node:assert/strict');
 const { Tracker } = require('../electron/tracker');
+const { identify } = require('../electron/tracker/apps');
+const { rootsFor } = require('../electron/tracker/browsers');
 
 let clock = Date.parse('2026-10-28T09:00:00Z');
 Date.now = () => clock;
@@ -56,7 +58,12 @@ function makeMedia() {
 function makeTracker(settings) {
   const store = makeStore(settings);
   const media = makeMedia();
-  const tracker = new Tracker({ store, mediaSignal: media, readWindow: () => ({ ...FOREGROUND }) });
+  const tracker = new Tracker({
+    store,
+    mediaSignal: media,
+    readWindow: () => ({ ...FOREGROUND }),
+    support: () => ({ supported: true, reason: null, message: null }),
+  });
   tracker.running = true;
   tracker.lastSampleAt = clock;
   tracker.lastCreditedAt = clock;
@@ -225,6 +232,67 @@ async function main() {
     assert.equal(tracker.timer, null);
     tracker.wake();
     assert.equal(tracker.suspended, false);
+  });
+
+  await scenario('identify reads macOS apps by bundle id', async () => {
+    const chrome = identify(
+      { exePath: '/Applications/Google Chrome.app', bundleId: 'com.google.Chrome', name: 'Google Chrome' },
+      'darwin');
+    assert.equal(chrome.name, 'Google Chrome');
+    assert.equal(chrome.browser.id, 'chrome');
+    const zen = identify({ exePath: '/Applications/Zen.app', bundleId: 'app.zen-browser.zen', name: 'Zen' }, 'darwin');
+    assert.equal(zen.browser.id, 'zen');
+    // No bundle id, no OS name: the bundle path supplies the name.
+    const other = identify({ exePath: '/Applications/Things 3.app', bundleId: '', name: '' }, 'darwin');
+    assert.equal(other.name, 'Things 3');
+    assert.equal(other.browser, null);
+  });
+
+  await scenario('identify reads Linux executables', async () => {
+    const snap = identify({ exePath: '/snap/chromium/3365/usr/lib/chromium-browser/chrome' }, 'linux');
+    assert.equal(snap.browser.id, 'chromium', 'a chrome binary inside a chromium path is Chromium');
+    assert.equal(snap.name, 'Chromium');
+    const chrome = identify({ exePath: '/usr/bin/google-chrome' }, 'linux');
+    assert.equal(chrome.browser.id, 'chrome');
+    assert.equal(chrome.name, 'Google Chrome');
+    const esr = identify({ exePath: '/usr/lib/firefox-esr/firefox-esr' }, 'linux');
+    assert.equal(esr.browser.id, 'firefox');
+    const term = identify({ exePath: '/usr/libexec/gnome-terminal-server' }, 'linux');
+    assert.equal(term.name, 'Terminal');
+    assert.equal(term.browser, null);
+    const unknown = identify({ exePath: '/opt/better-sqlite-gui/run' }, 'linux');
+    assert.equal(unknown.name, 'Run');
+  });
+
+  await scenario('rootsFor lays out each OS', async () => {
+    const win = rootsFor('win32', 'C:\\Users\\u', { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local', APPDATA: 'C:\\Users\\u\\AppData\\Roaming' });
+    assert.deepEqual(win.chromium.chrome, ['C:\\Users\\u\\AppData\\Local\\Google\\Chrome\\User Data']);
+    const mac = rootsFor('darwin', '/Users/u', {});
+    assert.deepEqual(mac.chromium.chrome, ['/Users/u/Library/Application Support/Google/Chrome']);
+    assert.deepEqual(mac.chromium.arc, ['/Users/u/Library/Application Support/Arc/User Data']);
+    assert.deepEqual(mac.firefox.zen, ['/Users/u/Library/Application Support/zen/Profiles']);
+    const linux = rootsFor('linux', '/home/u', {});
+    assert.deepEqual(linux.chromium.chrome, ['/home/u/.config/google-chrome']);
+    assert.deepEqual(linux.chromium.chromium, ['/home/u/.config/chromium', '/home/u/snap/chromium/common/chromium']);
+    assert.ok(linux.firefox.firefox.includes('/home/u/.mozilla/firefox'));
+    assert.ok(linux.firefox.firefox.includes('/home/u/.var/app/org.mozilla.firefox/.mozilla/firefox'));
+    const xdg = rootsFor('linux', '/home/u', { XDG_CONFIG_HOME: '/custom/cfg' });
+    assert.deepEqual(xdg.chromium.chrome, ['/custom/cfg/google-chrome']);
+  });
+
+  await scenario('an unsupported platform says why', async () => {
+    const store = makeStore();
+    const media = makeMedia();
+    const tracker = new Tracker({
+      store,
+      mediaSignal: media,
+      readWindow: () => null,
+      support: () => ({ supported: false, reason: 'wayland', message: 'Wayland hides the active window from apps. Sign in with an X11 session to track.' }),
+    });
+    assert.equal(tracker.status.supported, false);
+    tracker.start();
+    assert.equal(tracker.status.error, 'Wayland hides the active window from apps. Sign in with an X11 session to track.');
+    tracker.stop();
   });
 
   console.log(results.join('\n'));

@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('tally', {
   clearData: () => ipcRenderer.invoke('tally:clear'),
   openDataFolder: () => ipcRenderer.invoke('tally:open-data-folder'),
   rescanBrowsers: () => ipcRenderer.invoke('tally:browsers:rescan'),
+  requestAccessibility: () => ipcRenderer.invoke('tally:permissions:accessibility'),
   installUpdate: () => ipcRenderer.invoke('tally:update:install'),
   checkForUpdates: () => ipcRenderer.invoke('tally:update:check'),
   onChanged: (callback) => {

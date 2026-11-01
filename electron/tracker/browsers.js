@@ -10,30 +10,86 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 const IS_WIN = process.platform === 'win32';
-const LOCAL = process.env.LOCALAPPDATA || '';
-const ROAMING = process.env.APPDATA || '';
 
-const CHROMIUM_ROOTS = {
-  chrome: path.join(LOCAL, 'Google', 'Chrome', 'User Data'),
-  edge: path.join(LOCAL, 'Microsoft', 'Edge', 'User Data'),
-  brave: path.join(LOCAL, 'BraveSoftware', 'Brave-Browser', 'User Data'),
-  vivaldi: path.join(LOCAL, 'Vivaldi', 'User Data'),
-  opera: path.join(ROAMING, 'Opera Software', 'Opera Stable'),
-  'opera-gx': path.join(ROAMING, 'Opera Software', 'Opera GX Stable'),
-};
+// Where each browser keeps its profile directories, per OS. A browser id maps
+// to an array because flavours install in more than one place (snap, flatpak).
+// Pure: the platform, home and env come in as arguments so tests can ask for
+// any OS's layout. Chromium profiles are <root>/<Default|Profile N>/History;
+// Firefox profiles are <root>/<profile>/places.sqlite on every OS.
+function rootsFor(platform, home, env = {}) {
+  if (platform === 'win32') {
+    const join = path.win32.join;
+    const local = env.LOCALAPPDATA || '';
+    const roaming = env.APPDATA || '';
+    return {
+      chromium: {
+        chrome: [join(local, 'Google', 'Chrome', 'User Data')],
+        edge: [join(local, 'Microsoft', 'Edge', 'User Data')],
+        brave: [join(local, 'BraveSoftware', 'Brave-Browser', 'User Data')],
+        vivaldi: [join(local, 'Vivaldi', 'User Data')],
+        opera: [join(roaming, 'Opera Software', 'Opera Stable')],
+        'opera-gx': [join(roaming, 'Opera Software', 'Opera GX Stable')],
+      },
+      firefox: {
+        firefox: [join(roaming, 'Mozilla', 'Firefox', 'Profiles')],
+        zen: [join(roaming, 'zen', 'Profiles')],
+      },
+    };
+  }
+  const join = path.posix.join;
+  if (platform === 'darwin') {
+    const base = join(home, 'Library', 'Application Support');
+    return {
+      chromium: {
+        chrome: [join(base, 'Google', 'Chrome')],
+        chromium: [join(base, 'Chromium')],
+        edge: [join(base, 'Microsoft Edge')],
+        brave: [join(base, 'BraveSoftware', 'Brave-Browser')],
+        vivaldi: [join(base, 'Vivaldi')],
+        opera: [join(base, 'com.operasoftware.Opera')],
+        'opera-gx': [join(base, 'com.operasoftware.OperaGX')],
+        arc: [join(base, 'Arc', 'User Data')],
+      },
+      firefox: {
+        firefox: [join(base, 'Firefox', 'Profiles')],
+        zen: [join(base, 'zen', 'Profiles')],
+      },
+    };
+  }
+  const config = env.XDG_CONFIG_HOME || join(home, '.config');
+  return {
+    chromium: {
+      chrome: [join(config, 'google-chrome')],
+      chromium: [join(config, 'chromium'), join(home, 'snap', 'chromium', 'common', 'chromium')],
+      edge: [join(config, 'microsoft-edge')],
+      brave: [join(config, 'BraveSoftware', 'Brave-Browser')],
+      vivaldi: [join(config, 'vivaldi')],
+      opera: [join(config, 'opera')],
+    },
+    firefox: {
+      firefox: [
+        join(home, '.mozilla', 'firefox'),
+        join(home, 'snap', 'firefox', 'common', '.mozilla', 'firefox'),
+        join(home, '.var', 'app', 'org.mozilla.firefox', '.mozilla', 'firefox'),
+      ],
+      zen: [join(home, '.zen')],
+    },
+  };
+}
 
-const FIREFOX_ROOTS = {
-  firefox: path.join(ROAMING, 'Mozilla', 'Firefox', 'Profiles'),
-  zen: path.join(ROAMING, 'zen', 'Profiles'),
-};
+const ROOTS = rootsFor(process.platform, os.homedir(), process.env);
+const CHROMIUM_ROOTS = ROOTS.chromium;
+const FIREFOX_ROOTS = ROOTS.firefox;
 
 const BROWSER_LABELS = {
   chrome: 'Google Chrome',
+  chromium: 'Chromium',
   edge: 'Microsoft Edge',
   brave: 'Brave',
   vivaldi: 'Vivaldi',
   opera: 'Opera',
   'opera-gx': 'Opera GX',
+  arc: 'Arc',
   firefox: 'Firefox',
   zen: 'Zen',
 };
@@ -60,54 +116,55 @@ function loadSql() {
 }
 
 function chromiumProfiles(browserId) {
-  const root = CHROMIUM_ROOTS[browserId];
-  if (!root || !fs.existsSync(root)) return [];
   const out = [];
-  let entries = [];
-  try {
-    entries = fs.readdirSync(root, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    if (!/^(Default|Profile \d+|Guest Profile)$/i.test(entry.name) && !fs.existsSync(path.join(root, entry.name, 'History'))) continue;
-    const file = path.join(root, entry.name, 'History');
+  for (const root of CHROMIUM_ROOTS[browserId] || []) {
+    if (!fs.existsSync(root)) continue;
+    let entries = [];
     try {
-      const stat = fs.statSync(file);
-      if (stat.isFile() && stat.size > 0) out.push({ browserId, family: 'chromium', file, label: entry.name, mtime: stat.mtimeMs });
+      entries = fs.readdirSync(root, { withFileTypes: true });
     } catch {
-      // a profile without history is normal
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (!/^(Default|Profile \d+|Guest Profile)$/i.test(entry.name) && !fs.existsSync(path.join(root, entry.name, 'History'))) continue;
+      const file = path.join(root, entry.name, 'History');
+      try {
+        const stat = fs.statSync(file);
+        if (stat.isFile() && stat.size > 0) out.push({ browserId, family: 'chromium', file, label: entry.name, mtime: stat.mtimeMs });
+      } catch {
+        // a profile without history is normal
+      }
     }
   }
   return out.sort((a, b) => b.mtime - a.mtime);
 }
 
 function firefoxProfiles(browserId) {
-  const root = FIREFOX_ROOTS[browserId];
-  if (!root || !fs.existsSync(root)) return [];
   const out = [];
-  let entries = [];
-  try {
-    entries = fs.readdirSync(root, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const file = path.join(root, entry.name, 'places.sqlite');
+  for (const root of FIREFOX_ROOTS[browserId] || []) {
+    if (!fs.existsSync(root)) continue;
+    let entries = [];
     try {
-      const stat = fs.statSync(file);
-      if (stat.isFile() && stat.size > 0) out.push({ browserId, family: 'firefox', file, label: entry.name, mtime: stat.mtimeMs });
+      entries = fs.readdirSync(root, { withFileTypes: true });
     } catch {
-      // no places database in this profile
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const file = path.join(root, entry.name, 'places.sqlite');
+      try {
+        const stat = fs.statSync(file);
+        if (stat.isFile() && stat.size > 0) out.push({ browserId, family: 'firefox', file, label: entry.name, mtime: stat.mtimeMs });
+      } catch {
+        // no places database in this profile
+      }
     }
   }
   return out.sort((a, b) => b.mtime - a.mtime);
 }
 
 function discoverProfiles(force = false) {
-  if (!IS_WIN) return [];
   const now = Date.now();
   if (!force && profileCache && now - profileCacheAt < 5 * 60 * 1000) return profileCache;
   const all = [];
@@ -120,11 +177,13 @@ function discoverProfiles(force = false) {
 
 function browserAvailability() {
   const profiles = discoverProfiles();
+  const installedRoot = (id) => (CHROMIUM_ROOTS[id] || []).some((dir) => fs.existsSync(dir))
+    || (FIREFOX_ROOTS[id] || []).some((dir) => fs.existsSync(dir));
   return Object.keys(BROWSER_LABELS).map((id) => ({
     id,
     name: BROWSER_LABELS[id],
     profiles: profiles.filter((p) => p.browserId === id).length,
-    installed: profiles.some((p) => p.browserId === id) || Boolean(CHROMIUM_ROOTS[id] && fs.existsSync(CHROMIUM_ROOTS[id])) || Boolean(FIREFOX_ROOTS[id] && fs.existsSync(FIREFOX_ROOTS[id])),
+    installed: profiles.some((p) => p.browserId === id) || installedRoot(id),
   }));
 }
 
@@ -270,6 +329,7 @@ module.exports = {
   lookup,
   discoverProfiles,
   browserAvailability,
+  rootsFor,
   domainOf,
   normalizeTitle,
   IS_WIN,

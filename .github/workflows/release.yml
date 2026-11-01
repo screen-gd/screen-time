@@ -5,7 +5,9 @@ name: Release
 # release); otherwise the patch after the newest v* tag. The workflow tags the
 # merged commit itself, because main only accepts changes through PRs.
 # A pushed v* tag still releases that exact version, and a manual run only
-# builds the installer as an artifact.
+# builds the installers as artifacts.
+# Windows, macOS and Linux each build on their own runner, then a publish job
+# attaches every artifact to one release.
 
 on:
   push:
@@ -83,11 +85,19 @@ jobs:
           node-version: 22
           cache: npm
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
       - name: Install dependencies
         run: npm ci
 
       - name: Run the tracker tests
         run: npm test
+
+      - name: Run backend tests
+        working-directory: backend
+        run: go test ./...
 
       - name: Stamp the version
         shell: pwsh
@@ -101,23 +111,196 @@ jobs:
       - name: Upload the build
         uses: actions/upload-artifact@v4
         with:
-          name: tally-setup
+          name: windows
           path: |
             dist/Tally-Setup-*.exe
             dist/Tally-Setup-*.exe.blockmap
             dist/latest.yml
           if-no-files-found: error
 
+  macos:
+    name: macOS app
+    needs: version
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the tracker tests
+        run: npm test
+
+      - name: Run backend tests
+        working-directory: backend
+        run: go test ./...
+
+      # A TextEdit document gives the reader a focused window, so the
+      # Accessibility title read is exercised, not just the frontmost app.
+      - name: Smoke-check the foreground reader
+        shell: bash
+        run: |
+          # 'open' goes through LaunchServices, not AppleEvents: AppleScript on
+          # a runner times out waiting for automation consent, but 'open' just
+          # launches the app with the document. The window takes the file name.
+          touch /tmp/tally-smoke.txt
+          open -a TextEdit /tmp/tally-smoke.txt
+          sleep 3
+          out=$(npm run check -- --expect textedit) || { echo "$out"; exit 1; }
+          echo "$out"
+          echo "$out" | grep -E '^title +[^( ]'
+
+      - name: Stamp the version
+        shell: bash
+        run: npm version "${{ needs.version.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Build the app
+        run: npm run dist:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Inspect the build
+        run: |
+          codesign -dv --verbose=2 dist/mac-arm64/Tally.app 2>&1 || true
+          ls -la dist
+
+      - name: Upload the build
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.blockmap
+            dist/latest-mac.yml
+          if-no-files-found: error
+
+  linux:
+    name: Linux packages
+    needs: version
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Install X11 tools
+        # xfonts-base carries xterm's compiled-in font; without it xterm exits
+        # at launch and the smoke check has no window to read.
+        run: sudo apt-get update && sudo apt-get install -y xvfb xterm x11-utils xdotool xfonts-base
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the tracker tests
+        run: npm test
+
+      - name: Run backend tests
+        working-directory: backend
+        run: go test ./...
+
+      - name: Smoke-check the X11 reader
+        shell: bash
+        run: |
+          Xvfb :99 -screen 0 1280x800x24 &
+          export DISPLAY=:99
+          sleep 1
+          xterm -T tally-smoke 2>/tmp/xterm-err.log &
+          xterm_pid=$!
+          id=""
+          for i in $(seq 1 20); do
+            # xdotool exits 1 while no window matches; without '|| true',
+            # pipefail + -e would abort the step on the first empty search.
+            # Search by pid (_NET_WM_PID) first, then by the -T window name.
+            id=$(xdotool search --pid "$xterm_pid" | head -n 1 || true)
+            if [ -z "$id" ]; then
+              id=$(xdotool search --name tally-smoke | head -n 1 || true)
+            fi
+            [ -n "$id" ] && break
+            sleep 0.5
+          done
+          if [ -z "$id" ]; then
+            echo "::error::xterm never appeared on Xvfb"
+            cat /tmp/xterm-err.log || true
+            xwininfo -root -tree || true
+            exit 1
+          fi
+          # xprop's format letter picks the property type: 'a' would set an
+          # ATOM (and intern "$id" as an atom name); 'c' stores the numeric
+          # value as a 32-bit CARDINAL, which is what readers expect. The pid
+          # is set explicitly so the check doesn't depend on xterm publishing it.
+          xprop -id "$id" -f _NET_WM_PID 32c -set _NET_WM_PID "$xterm_pid"
+          xprop -root -f _NET_ACTIVE_WINDOW 32c -set _NET_ACTIVE_WINDOW "$id"
+          xprop -root _NET_ACTIVE_WINDOW
+          xprop -id "$id" _NET_WM_PID WM_NAME
+          XDG_SESSION_TYPE=x11 npm run check -- --expect xterm
+
+      - name: Stamp the version
+        shell: bash
+        run: npm version "${{ needs.version.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Build the packages
+        run: npm run dist:linux
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Upload the build
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/latest-linux.yml
+          if-no-files-found: error
+
+  publish:
+    name: Publish the release
+    needs: [version, windows, macos, linux]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download every artifact into dist/
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*"
+          path: dist
+          merge-multiple: true
+
       - name: Publish the release
-        if: needs.version.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.version.outputs.version }}
           target_commitish: ${{ github.sha }}
-          # latest.yml and the blockmap are what installed copies read to update themselves.
+          # latest*.yml and the blockmaps are what installed copies read to update themselves.
           files: |
             dist/Tally-Setup-*.exe
-            dist/Tally-Setup-*.exe.blockmap
             dist/latest.yml
+            dist/*.dmg
+            dist/*.zip
+            dist/*.AppImage
+            dist/*.deb
+            dist/latest-linux.yml
+            dist/latest-mac.yml
+            dist/*.blockmap
           fail_on_unmatched_files: true
           generate_release_notes: true

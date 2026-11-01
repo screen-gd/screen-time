@@ -4,6 +4,7 @@ dist/
 *.log
 design/out/
 native/media/build/
+backend/tally-backend*
 
 # local screenshot output
 .screenshots/
