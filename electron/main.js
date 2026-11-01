@@ -101,6 +101,18 @@ function snapshot() {
   };
 }
 
+// Recreate the frontend on demand; closing it releases its renderer.
+function showWindow() {
+  if (!win) {
+    createWindow();
+    win.once('ready-to-show', () => { win.show(); win.focus(); });
+    return;
+  }
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
 function createWindow() {
   nativeTheme.themeSource = 'dark';
   const shotWidth = SCREENSHOT ? Number(process.env.TALLY_WIDTH) || 0 : 0;
@@ -133,11 +145,6 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
-  });
-  win.on('close', (event) => {
-    if (app.isQuitting || SCREENSHOT) return;
-    event.preventDefault();
-    win.hide();
   });
   win.on('closed', () => { win = null; });
 
@@ -172,10 +179,25 @@ function createTray() {
   const icon = nativeImage.createFromPath(path.join(ROOT, 'build', 'tray-32.png'));
   tray = new Tray(icon);
   tray.setToolTip('Tally - screen time');
+  let menu = null;
   const rebuild = () => {
     const paused = store.settings.paused;
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: 'Open Tally', click: () => { if (win) { win.show(); win.focus(); } } },
+    const today = store.aggregate(1);
+    const status = tracker.getStatus();
+    const duration = (seconds) => {
+      const minutes = Math.floor(seconds / 60);
+      return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m`;
+    };
+    const label = (name) => String(name).replace(/&/g, '&&');
+    tray.setToolTip(paused ? 'Tally - tracking paused' : 'Tally - tracking active');
+    menu = Menu.buildFromTemplate([
+      { label: paused ? 'Tracking paused' : status.error ? 'Tracking unavailable' : status.idle ? 'Tracking idle' : 'Tracking active', enabled: false },
+      { label: `Today: ${duration(today.totalSeconds)}`, enabled: false },
+      { label: 'Most used apps today', enabled: false },
+      ...today.apps.slice(0, 3).map((entry) => ({ label: `${label(entry.name)}: ${duration(entry.seconds)}`, enabled: false })),
+      ...(today.apps.length ? [] : [{ label: 'No activity recorded yet', enabled: false }]),
+      { type: 'separator' },
+      { label: 'Open Tally', click: showWindow },
       {
         label: paused ? 'Resume tracking' : 'Pause tracking',
         click: () => {
@@ -189,12 +211,18 @@ function createTray() {
         : []),
       { type: 'separator' },
       { label: 'Quit', click: () => { app.isQuitting = true; app.quit(); } },
-    ]));
+    ]);
   };
   rebuild();
   rebuildTrayMenu = rebuild;
-  tray.on('click', () => { if (win) { win.show(); win.focus(); } });
-  tray.on('double-click', () => { if (win) { win.show(); win.focus(); } });
+  // Keep the menu unattached: Windows suppresses right-click with setContextMenu.
+  // Build from current tracking data each time the menu opens.
+  tray.on('right-click', () => {
+    rebuild();
+    tray.popUpContextMenu(menu);
+  });
+  tray.on('click', showWindow);
+  tray.on('double-click', showWindow);
 }
 
 function applyLoginItem(settings) {
@@ -254,9 +282,7 @@ function registerIpc() {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (win) { win.show(); win.focus(); }
-  });
+  app.on('second-instance', showWindow);
 
   app.whenReady().then(() => {
     app.setAppUserModelId('com.tally.screentime');
@@ -308,13 +334,10 @@ if (!app.requestSingleInstanceLock()) {
 
     applyLoginItem(store.settings);
     registerIpc();
-    createWindow();
+    if (!process.argv.includes('--hidden') || SCREENSHOT) createWindow();
     createTray();
 
-    app.on('activate', () => {
-      if (!win) createWindow();
-      else win.show();
-    });
+    app.on('activate', showWindow);
   });
 
   app.on('window-all-closed', () => {

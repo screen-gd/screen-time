@@ -48,6 +48,8 @@ Every merge to `main` publishes a release. [`.github/workflows/release.yml`](.gi
 - Browsers: Chrome, Edge, Brave, Vivaldi, Opera, Opera GX, Firefox and Zen.
 - History is kept for 30, 90 or 365 days, then pruned.
 
+Closing the window releases the frontend while tracking continues in the tray. Right-click the tray icon to see today’s total and three most-used apps, pause or resume tracking, or open Tally again. Choose Quit to stop tracking and exit. Starting hidden at login does not load the frontend.
+
 Pause from the tray or the sidebar. Tally can start hidden at login. Settings â€º Appearance offers preset themes (Ink, T3 Code, T3 Chat, Forest, Fire) or a custom palette built from three colours.
 
 ## Where the data lives
