@@ -4,7 +4,7 @@
 // which ticks earn seconds, what the idle loop costs, and the guards around
 // sleep, lock and a player left running.
 //
-// Run with `npm test`.
+// Run with `bun run test`.
 
 const assert = require('node:assert/strict');
 const { Tracker } = require('../electron/tracker');

@@ -1,9 +1,9 @@
 'use strict';
 
-// Run with `npm run check`: prints what the tracker sees right now, through the
+// Run with `bun run check`: prints what the tracker sees right now, through the
 // same calls the sampler makes. Useful when nothing is being recorded.
 //
-// `npm run check -- --expect <substring>` exits 1 unless tracking is supported
+// `bun run check -- --expect <substring>` exits 1 unless tracking is supported
 // and the foreground app has a pid and an exePath containing the substring
 // (case-insensitive); `--expect` with no value only requires a pid and an
 // exePath. CI uses it as a smoke test on each OS.

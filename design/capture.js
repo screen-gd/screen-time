@@ -1,7 +1,7 @@
 'use strict';
 
 // Renders every design comp to a PNG at its native 1440x810 size.
-// Run with: npx electron design/capture.js
+// Run with: bunx electron design/capture.js
 const { app, BrowserWindow } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
