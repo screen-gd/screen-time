@@ -4,7 +4,7 @@
 // colour. A port of the static-fill part of dithercn's dither-core
 // (https://github.com/opencoredev/dithercn, MIT, (c) 2026 Leo and Shadcn Labs):
 // Bayer threshold maps, dithered ramps, dotted and hatched tiles, all as
-// tiled SVG masks over the ink colour. Run with: npm run dither
+// tiled SVG masks over the ink colour. Run with: bun run dither
 const fs = require('node:fs');
 const path = require('node:path');
 

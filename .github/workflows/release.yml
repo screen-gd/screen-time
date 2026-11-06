@@ -83,17 +83,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
 
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Run the tracker tests
-        run: npm test
+        run: bun run test
 
       - name: Run backend tests
         working-directory: backend
@@ -101,10 +104,10 @@ jobs:
 
       - name: Stamp the version
         shell: pwsh
-        run: npm version "${{ needs.version.outputs.version }}" --no-git-tag-version --allow-same-version
+        run: bun pm pkg set version="${{ needs.version.outputs.version }}"
 
       - name: Build the installer
-        run: npm run dist
+        run: bun run dist
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
@@ -129,17 +132,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
 
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Run the tracker tests
-        run: npm test
+        run: bun run test
 
       - name: Run backend tests
         working-directory: backend
@@ -156,16 +162,16 @@ jobs:
           touch /tmp/tally-smoke.txt
           open -a TextEdit /tmp/tally-smoke.txt
           sleep 3
-          out=$(npm run check -- --expect textedit) || { echo "$out"; exit 1; }
+          out=$(bun run check --expect textedit) || { echo "$out"; exit 1; }
           echo "$out"
           echo "$out" | grep -E '^title +[^( ]'
 
       - name: Stamp the version
         shell: bash
-        run: npm version "${{ needs.version.outputs.version }}" --no-git-tag-version --allow-same-version
+        run: bun pm pkg set version="${{ needs.version.outputs.version }}"
 
       - name: Build the app
-        run: npm run dist:mac
+        run: bun run dist:mac
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
@@ -196,7 +202,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
 
       - uses: actions/setup-go@v5
         with:
@@ -208,10 +217,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y xvfb xterm x11-utils xdotool xfonts-base
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Run the tracker tests
-        run: npm test
+        run: bun run test
 
       - name: Run backend tests
         working-directory: backend
@@ -251,14 +260,14 @@ jobs:
           xprop -root -f _NET_ACTIVE_WINDOW 32c -set _NET_ACTIVE_WINDOW "$id"
           xprop -root _NET_ACTIVE_WINDOW
           xprop -id "$id" _NET_WM_PID WM_NAME
-          XDG_SESSION_TYPE=x11 npm run check -- --expect xterm
+          XDG_SESSION_TYPE=x11 bun run check --expect xterm
 
       - name: Stamp the version
         shell: bash
-        run: npm version "${{ needs.version.outputs.version }}" --no-git-tag-version --allow-same-version
+        run: bun pm pkg set version="${{ needs.version.outputs.version }}"
 
       - name: Build the packages
-        run: npm run dist:linux
+        run: bun run dist:linux
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 

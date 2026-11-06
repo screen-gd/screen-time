@@ -2,7 +2,7 @@
 
 // Builds the media-session addon (native/media) against the Electron version in
 // package.json. The build is skipped when the binary is already current, so
-// `npm start` stays fast. A machine without the C++ toolchain still runs the
+// `bun run start` stays fast. A machine without the C++ toolchain still runs the
 // app: the tracker falls back to keyboard/mouse idle only.
 const fs = require('node:fs');
 const path = require('node:path');
