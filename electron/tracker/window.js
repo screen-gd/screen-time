@@ -18,7 +18,7 @@ else {
 
 // On Windows the reader fills idleMs from GetLastInputInfo itself. Elsewhere
 // the OS has no input clock, so Electron's powerMonitor supplies it. Plain
-// Node (npm run check, the tests) has no powerMonitor: report 0.
+// Node (bun run check, the tests) has no powerMonitor: report 0.
 function systemIdleMs() {
   try {
     return require('electron').powerMonitor.getSystemIdleTime() * 1000;

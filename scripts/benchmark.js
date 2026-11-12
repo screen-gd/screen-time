@@ -84,7 +84,7 @@ function start(command, args, env, readyPattern) {
 }
 
 async function measureScenario(name, command, args, env, readyPattern, apiBase = null, extraPids = [], startupOffsetMs = 0) {
-  if (!command) return { name, error: 'Electron is not installed; run npm install before benchmarking desktop scenarios' };
+  if (!command) return { name, error: 'Electron is not installed; run bun install before benchmarking desktop scenarios' };
   let running;
   try { running = await start(command, args, env, readyPattern); } catch (error) { return { name, error: error.message }; }
   try {
@@ -140,7 +140,7 @@ async function main() {
   const saving = coupled && backendOnly ? ((1 - backendOnly.rssBytes.median / coupled.rssBytes.median) * 100).toFixed(1) : null;
   const comparison = saving ? `The backend-only process uses ${saving}% less RSS than the coupled Electron idle run.` : 'The backend-only process is the memory floor when the desktop frontend is closed.';
   const startupRows = startup.map((item) => `| ${item.name} | ${item.startupMs == null ? 'error' : `${item.startupMs} ms`} |`).join('\n');
-  fs.writeFileSync(mdPath, `# Tally process benchmark\n\nGenerated ${report.generatedAt}. Each scenario was warmed for ${WARMUP_MS} ms and sampled ${ITERATIONS} times. RSS includes the process tree; Electron therefore includes its renderer/GPU children. The decoupled Electron row also includes the separately running Go backend.\n\n## Startup\n\n| Path | Time to ready |\n| --- | ---: |\n${startupRows}\n\nThe backend-plus-Electron time includes backend startup followed by frontend startup.\n\n## Runtime memory\n\n| Scenario | Median RSS | Startup | Snapshot median |\n| --- | ---: | ---: | ---: |\n${rows.join('\n')}\n\n${comparison} Keeping the Electron frontend open still costs most of the desktop memory.\n\nThe coupled scenario uses the deterministic local Electron store (--demo) so it does not contact the backend. Re-run with npm run benchmark; compare runs on the same machine with other heavy apps unchanged.\n`);
+  fs.writeFileSync(mdPath, `# Tally process benchmark\n\nGenerated ${report.generatedAt}. Each scenario was warmed for ${WARMUP_MS} ms and sampled ${ITERATIONS} times. RSS includes the process tree; Electron therefore includes its renderer/GPU children. The decoupled Electron row also includes the separately running Go backend.\n\n## Startup\n\n| Path | Time to ready |\n| --- | ---: |\n${startupRows}\n\nThe backend-plus-Electron time includes backend startup followed by frontend startup.\n\n## Runtime memory\n\n| Scenario | Median RSS | Startup | Snapshot median |\n| --- | ---: | ---: | ---: |\n${rows.join('\n')}\n\n${comparison} Keeping the Electron frontend open still costs most of the desktop memory.\n\nThe coupled scenario uses the deterministic local Electron store (--demo) so it does not contact the backend. Re-run with bun run benchmark; compare runs on the same machine with other heavy apps unchanged.\n`);
   console.log(`Benchmark written to ${jsonPath}`);
   console.log(`Benchmark summary written to ${mdPath}`);
   console.table(startup);

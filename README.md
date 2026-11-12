@@ -19,12 +19,12 @@ On Windows and on the Linux AppImage, screen-time updates itself. It checks Rele
 ## Run from source
 
 ```bash
-npm install
-npm start        # starts in the tray; closing the window keeps counting
-npm run demo     # sample data, tracking off
-npm test         # the sampling rules, no desktop needed
-npm run backend:start # Go backend plus the same UI at http://127.0.0.1:43821
-npm run benchmark    # repeatable RSS/startup/API comparison
+bun install
+bun run start        # starts in the tray; closing the window keeps counting
+bun run demo     # sample data, tracking off
+bun run test         # the sampling rules, no desktop needed
+bun run backend:start # Go backend plus the same UI at http://127.0.0.1:43821
+bun run benchmark    # repeatable RSS/startup/API comparison
 ```
 
 Normal Electron launches start a loopback Go backend automatically. The Electron
@@ -33,7 +33,7 @@ access are OS-specific; it sends samples to the backend, which owns the JSON fil
 settings and aggregation. This keeps the data interface independent of the UI and
 allows the same `app/` renderer to run in a browser.
 
-To use the browser surface, run `npm run backend:start` and open
+To use the browser surface, run `bun run backend:start` and open
 <http://127.0.0.1:43821>. The backend serves the bundled renderer and exposes the
 read/write interface under `/api/v1/`, protected by a per-process token that is
 injected into the served page. A separately hosted renderer can set
@@ -42,7 +42,7 @@ loads, and its origin must be allowed with `--allow-origin`. The backend is loop
 by default; use `--bind` only when you intentionally want another machine to reach
 it.
 
-`npm run benchmark` writes [`benchmarks/latest.md`](benchmarks/latest.md) and the
+`bun run benchmark` writes [`benchmarks/latest.md`](benchmarks/latest.md) and the
 raw samples in `benchmarks/latest.json`. The checked-in Windows run measured a
 14.7 MB median Go backend when the Electron frontend was closed, compared with
 377.2 MB for the coupled Electron idle process (a 96.1% lower resident set).
@@ -55,15 +55,15 @@ backend followed by Electron, and 2,553 ms for the coupled Electron app.
 
 The first run starts empty. screen-time samples the foreground window every 5 seconds and saves after the first few records.
 
-If nothing is recorded, `npm run check` prints the foreground window, its process, its media sessions and the idle clock through the same calls the tracker uses.
+If nothing is recorded, `bun run check` prints the foreground window, its process, its media sessions and the idle clock through the same calls the tracker uses.
 
-`npm start` builds the small media addon in `native/media` on first run. It needs the Visual Studio C++ tools and a Windows SDK; without them the app still starts and falls back to keyboard-and-mouse idle alone, and Settings says so.
+`bun run start` builds the small media addon in `native/media` on first run. It needs the Visual Studio C++ tools and a Windows SDK; without them the app still starts and falls back to keyboard-and-mouse idle alone, and Settings says so.
 
 ## Build
 
 ```bash
-npm run dist     # dist/screen-time-Setup-<version>.exe, the same file Releases ships
-npm run icons    # refresh the bundled brand glyphs from thesvg.org
+bun run dist     # dist/screen-time-Setup-<version>.exe, the same file Releases ships
+bun run icons    # refresh the bundled brand glyphs from thesvg.org
 ```
 
 The installer is about 120 MB because it carries Chromium; the app itself is a few hundred KB.
@@ -99,7 +99,7 @@ One file, written atomically, at most every 15 seconds while tracking. Deleting 
 - **Website names are a heuristic.** A browser window is matched to a recent history entry by title. Private windows, cleared history, a page whose title changed after it loaded, or no recent visit all mean the browser time is counted but the site stays unnamed. No site is guessed from the URL bar.
 - **Sampling, not events.** Each sample is credited to the window in front at that moment, so an app opened and closed between samples can be missed.
 - **Unsigned builds.** Windows SmartScreen warns on first run; there is no code-signing certificate yet. The macOS app is ad-hoc signed and not notarized, so Gatekeeper blocks the first launch until you allow it. On Ubuntu 24.04+ the AppImage may need `--no-sandbox` because of AppArmor restrictions.
-- **The media addon is Windows-only.** `npm start` builds `native/media` only on Windows; other OSes skip it and use idle rules.
+- **The media addon is Windows-only.** `bun run start` builds `native/media` only on Windows; other OSes skip it and use idle rules.
 
 ## Structure
 
@@ -119,11 +119,11 @@ One file, written atomically, at most every 15 seconds while tracking. Deleting 
 | `backend/` | standalone Go data backend, HTTP interface, static browser hosting and tests |
 | `app/` | renderer: shell, three screens, settings, bundled Geist fonts |
 | `app/icons/` | brand glyphs bundled from [thesvg.org](https://thesvg.org); `sources.json` lists each slug |
-| `scripts/tracker-test.js` | the sampling rules, run by `npm test` |
+| `scripts/tracker-test.js` | the sampling rules, run by `bun run test` |
 | `scripts/benchmark.js` | measures process-tree RSS, startup time and backend snapshot latency |
 | `.github/workflows/release.yml` | tests and builds all three platforms; publishes them as a release on every merge to `main` or a pushed `v*` tag |
 
-Sample data lives in `app/demo-data.js` and is used only by `npm run demo` and the browser preview.
+Sample data lives in `app/demo-data.js` and is used only by `bun run demo` and the browser preview.
 
 App and site glyphs are monochrome brand marks from thesvg.org, used only to identify the software they belong to. The marks stay the trademarks of their owners; the file collection is MIT.
 

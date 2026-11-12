@@ -1,5 +1,5 @@
 // Pulls the brand glyphs listed in app/icons/sources.json from thesvg.org.
-// Run by hand (`npm run icons`) when the list changes; the SVGs are committed,
+// Run by hand (`bun run icons`) when the list changes; the SVGs are committed,
 // so the app itself never touches the network.
 const fs = require('node:fs');
 const path = require('node:path');
