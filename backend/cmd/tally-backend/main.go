@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/screen-gd/screen-time/backend/internal/server"
 	"github.com/screen-gd/screen-time/backend/internal/store"
@@ -68,6 +70,7 @@ func main() {
 	frontendDir := flag.String("frontend-dir", "", "directory containing the browser frontend")
 	allowHosts := flag.String("allow-host", os.Getenv("TALLY_BACKEND_ALLOWED_HOSTS"), "comma-separated extra Host names accepted besides loopback")
 	allowOrigins := flag.String("allow-origin", os.Getenv("TALLY_BACKEND_ALLOWED_ORIGINS"), "comma-separated extra browser origins allowed to call the API")
+	exitWithStdin := flag.Bool("exit-with-stdin", false, "save and exit when stdin closes (used by launchers that own the process)")
 	flag.Parse()
 
 	hosts := splitList(*allowHosts)
@@ -84,7 +87,6 @@ func main() {
 	api := server.New(data, *frontendDir, server.Options{
 		Token: os.Getenv("TALLY_BACKEND_TOKEN"), AllowedHosts: hosts, AllowedOrigins: splitList(*allowOrigins),
 	})
-	defer data.Flush()
 	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", *bind, *port))
 	if err != nil {
 		log.Fatalf("listen: %v", err)
@@ -96,14 +98,27 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3e9)
-		defer cancel()
-		_ = httpServer.Shutdown(shutdownCtx)
-	}()
-
-	if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("serve: %v", err)
+	if *exitWithStdin {
+		// The OS closes the pipe when the launcher exits or crashes, so this also
+		// covers parents that never get to signal us (and Windows, which has no SIGTERM).
+		go func() {
+			_, _ = io.Copy(io.Discard, os.Stdin)
+			stop()
+		}()
 	}
+
+	served := make(chan error, 1)
+	go func() { served <- httpServer.Serve(listener) }()
+	select {
+	case err := <-served:
+		data.Flush()
+		log.Fatalf("serve: %v", err)
+	case <-ctx.Done():
+	}
+	// Let in-flight writes land before the final save.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = httpServer.Shutdown(shutdownCtx)
+	data.Flush()
+	log.Printf("Tally backend stopped")
 }
