@@ -796,6 +796,32 @@ button.trow:hover .chev { stroke: var(--text); }
 .enter .wheel { animation: roll 320ms var(--ease-out) backwards; }
 .enter .wheel:nth-child(2) { animation-delay: 40ms; }
 
+/* ---------- focus lockdown ---------- */
+
+.focus { display: flex; flex-direction: column; gap: 16px; margin-top: 20px; max-width: 760px; }
+.add-site { display: flex; gap: 10px; padding: 12px 0 4px; }
+.text-input {
+  flex: 1 1 auto; min-width: 0; height: 32px; padding: 0 11px;
+  border: 0; border-radius: 8px; background: var(--well); box-shadow: var(--sunken);
+  font-size: 12.5px;
+}
+.text-input::placeholder { color: var(--quiet); }
+.field-error { margin: 6px 0 0; font-size: 12px; color: var(--negative); }
+.blocked { display: flex; flex-direction: column; padding: 8px 0 4px; }
+.blocked-row { display: flex; align-items: center; gap: 12px; height: 44px; }
+.blocked-row + .blocked-row { border-top: 1px solid rgba(0, 0, 0, 0.9); box-shadow: inset 0 1px 0 var(--edge-low); }
+.blocked-row .bn { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.blocked-row .link-btn { margin-top: 0; }
+.suggest { display: flex; flex-wrap: wrap; gap: 8px; padding: 6px 0 10px; }
+.suggest .btn { height: 28px; padding: 0 10px; font-size: 12px; }
+
+/* the full-screen cover shown over a blocked site (focus.html) */
+body.cover { display: grid; place-items: center; padding: 24px; }
+.cover-card { display: flex; flex-direction: column; align-items: center; gap: 10px; max-width: 440px; padding: 36px 40px 32px; text-align: center; }
+.cover-card h1 { margin: 10px 0 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+.cover-site { margin: 0; font-size: 14px; color: var(--accent); }
+.cover-why { margin: 4px 0 14px; font-size: 13px; line-height: 1.55; color: var(--muted); }
+
 /* ---------- narrower windows ---------- */
 
 @media (max-width: 1180px) {

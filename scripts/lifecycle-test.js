@@ -77,6 +77,8 @@ async function check(hidden, backend = false) {
       async stopBackend(child) { if (!child) return; await new Promise(resolve => setImmediate(resolve)); backendStopped = true; },
     },
     './updater': { Updater: class { constructor() { this.state = {}; } } },
+    './focus': { FocusGuard: class { sync() {} stop() {} } },
+    './focus-cover': { FocusCover: class { hide() {} destroy() {} owns() { return false; } } },
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8'), {
     require: name => mocks[name] || require(name),

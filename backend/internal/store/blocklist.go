@@ -1,0 +1,59 @@
+package store
+
+import (
+	"regexp"
+	"strings"
+)
+
+// Focus lockdown's block list. Mirrors electron/blocklist.js so both stores keep the same entries.
+
+const blockedSitesLimit = 200
+
+var (
+	siteScheme = regexp.MustCompile(`^[a-z][a-z0-9+.-]*://`)
+	sitePort   = regexp.MustCompile(`:\d+$`)
+	siteHost   = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
+)
+
+// normalizeSite turns a pasted address ("https://www.reddit.com/r/all", "*.reddit.com") into a bare hostname, or "".
+func normalizeSite(value string) string {
+	text := siteScheme.ReplaceAllString(strings.ToLower(strings.TrimSpace(value)), "")
+	if i := strings.IndexAny(text, "/?#"); i >= 0 {
+		text = text[:i]
+	}
+	if i := strings.Index(text, "@"); i >= 0 {
+		text = text[i+1:]
+	}
+	text = sitePort.ReplaceAllString(text, "")
+	text = strings.TrimPrefix(text, "*.")
+	text = strings.TrimPrefix(text, "www.")
+	text = strings.TrimSuffix(text, ".")
+	if len(text) > 253 || !siteHost.MatchString(text) {
+		return ""
+	}
+	return text
+}
+
+func normalizeSiteList(list []string) []string {
+	out := []string{}
+	for _, item := range list {
+		site := normalizeSite(item)
+		if site == "" || contains(out, site) {
+			continue
+		}
+		out = append(out, site)
+		if len(out) >= blockedSitesLimit {
+			break
+		}
+	}
+	return out
+}
+
+func contains(list []string, value string) bool {
+	for _, item := range list {
+		if item == value {
+			return true
+		}
+	}
+	return false
+}

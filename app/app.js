@@ -21,6 +21,8 @@
     enter: true,
     loadError: false,
     diagOpen: false,
+    focusDraft: '',
+    focusError: null,
   };
 
   const view = document.getElementById('view');
@@ -499,6 +501,10 @@
         other: true,
       }));
     }
+    const seeAll = rest.length
+      // Opens on today, matching this card, rather than the page's last range.
+      ? h('button', { class: 'link-btn', type: 'button', onclick: () => { state.ranges.sites = 1; go('sites'); } }, `See all ${plural(sites.length, 'site', 'sites')}`)
+      : null;
     if (unattributed > 0.5) {
       rows.push(itemRow({
         glyph: glyph(null),
@@ -523,7 +529,8 @@
         h('div', { class: 'list-title', text: 'Websites' }),
         sites.length ? h('div', { class: 'list-meta num', text: plural(sites.length, 'site', 'sites') }) : null),
       empty && !rows.length ? empty : rows,
-      empty && rows.length ? h('div', { class: 'list-foot' }, empty) : null);
+      empty && rows.length ? h('div', { class: 'list-foot' }, empty) : null,
+      seeAll && !empty ? h('div', { class: 'list-foot' }, seeAll) : null);
   }
 
   function itemRow({ glyph: mark, name, seconds, whole, other = false }) {
@@ -642,10 +649,8 @@
     const days = state.ranges.sites;
     const data = snap.ranges[days] || snap.today;
     const total = data.browserSeconds;
+    // This page is where every site is listed; the Today card keeps the short version.
     const sites = data.sites;
-    const shown = sites.slice(0, 6);
-    const rest = sites.slice(6);
-    const restSeconds = totalOf(rest);
     const namedSeconds = totalOf(sites);
     const unattributed = Math.max(0, total - namedSeconds);
 
@@ -655,7 +660,7 @@
       right: [rangeControl('sites', days)],
     });
 
-    const rows = shown.map((site) => siteRow({
+    const rows = sites.map((site) => siteRow({
       glyph: siteGlyph(site.domain),
       name: site.domain,
       detail: site.title ? `${shortName(site.browser || 'Browser')} · ${site.title}` : shortName(site.browser || 'Browser'),
@@ -663,16 +668,6 @@
       whole: total,
     }));
 
-    if (restSeconds > 0.5) {
-      rows.push(siteRow({
-        glyph: glyph(null),
-        name: 'Other sites',
-        detail: `${plural(rest.length, 'site', 'sites')} below this list`,
-        seconds: restSeconds,
-        whole: total,
-        other: true,
-      }));
-    }
     if (unattributed > 0.5) {
       rows.push(siteRow({
         glyph: glyph(null),
@@ -742,6 +737,123 @@
           h('i', { class: `swatch ${piece.texture}`, 'aria-hidden': 'true' }),
           h('b', { text: piece.name }),
           h('span', { class: 'num', text: durationText(piece.seconds) })))));
+  }
+
+  /* ---------- focus lockdown ---------- */
+
+  // Same rules as electron/blocklist.js, so the field can say no before saving.
+  const SITE_HOST = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+  function normalizeSite(value) {
+    const text = String(value || '').trim().toLowerCase()
+      .replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
+      .split(/[/?#]/)[0]
+      .replace(/^[^@]*@/, '')
+      .replace(/:\d+$/, '')
+      .replace(/^\*\./, '')
+      .replace(/^www\./, '')
+      .replace(/\.$/, '');
+    return SITE_HOST.test(text) ? text : null;
+  }
+
+  function blockedSites(settings) {
+    return Array.isArray(settings.blockedSites) ? settings.blockedSites : [];
+  }
+
+  async function addBlockedSite(value) {
+    const site = normalizeSite(value);
+    if (!site) {
+      state.focusError = 'Enter a site address, like reddit.com.';
+      render();
+      return;
+    }
+    state.focusError = null;
+    state.focusDraft = '';
+    const list = blockedSites(state.snapshot.settings);
+    if (list.includes(site)) render();
+    else await saveSettings({ blockedSites: [...list, site] });
+    const input = document.getElementById('focus-input');
+    if (input) input.focus();
+  }
+
+  function renderFocus(snap) {
+    const settings = snap.settings;
+    const list = blockedSites(settings);
+    const on = Boolean(settings.focusLockdown);
+
+    const header = pageHead({
+      title: 'Focus lockdown',
+      right: on && list.length ? [h('span', { class: 'stamp', text: 'On' })] : null,
+    });
+
+    const lockdown = h('section', { class: 'group slab' },
+      switchRow('Focus lockdown',
+        list.length
+          ? 'While on, a blocked site in front of you is covered until you close it or switch away.'
+          : 'Add a site to the block list, then turn this on.',
+        on, () => saveSettings({ focusLockdown: !on })),
+      on && !list.length ? h('p', { class: 'note', text: 'Nothing is blocked until the list has a site.' }) : null);
+
+    const form = h('form', {
+      class: 'add-site',
+      onsubmit: (event) => {
+        event.preventDefault();
+        addBlockedSite(event.target.elements.site.value);
+      },
+    },
+    h('input', {
+      class: 'text-input',
+      id: 'focus-input',
+      name: 'site',
+      type: 'text',
+      autocomplete: 'off',
+      spellcheck: 'false',
+      placeholder: 'reddit.com',
+      'aria-label': 'Site to block',
+      value: state.focusDraft || '',
+      oninput: (event) => { state.focusDraft = event.target.value; },
+    }),
+    h('button', { class: 'btn', type: 'submit' }, 'Add'));
+
+    const rows = list.map((site) => h('div', { class: 'blocked-row' },
+      siteGlyph(site),
+      h('span', { class: 'bn', text: site, title: site }),
+      h('button', {
+        class: 'link-btn',
+        type: 'button',
+        'aria-label': `Remove ${site}`,
+        onclick: () => saveSettings({ blockedSites: list.filter((entry) => entry !== site) }),
+      }, 'Remove')));
+
+    // The week's most-visited sites are the likeliest distractions.
+    const week = (snap.ranges && snap.ranges[7]) || snap.today;
+    const suggestions = ((week && week.sites) || [])
+      .map((row) => normalizeSite(row.domain))
+      .filter((site) => site && !list.some((entry) => site === entry || site.endsWith(`.${entry}`)))
+      .slice(0, 6);
+
+    const blockList = h('section', { class: 'group slab' },
+      groupHead('Block list', plural(list.length, 'site', 'sites')),
+      form,
+      state.focusError ? h('p', { class: 'field-error', role: 'alert', text: state.focusError }) : null,
+      rows.length ? h('div', { class: 'blocked' }, rows) : h('p', { class: 'note', text: 'No sites blocked yet.' }),
+      suggestions.length
+        ? [
+          h('div', { class: 'row-d', text: 'Most visited this week' }),
+          h('div', { class: 'suggest' }, suggestions.map((site) => h('button', {
+            class: 'btn',
+            type: 'button',
+            onclick: () => addBlockedSite(site),
+          }, `+ ${site}`))),
+        ]
+        : null,
+      h('p', { class: 'field-hint', text: 'Blocking a site includes its subdomains: reddit.com also covers old.reddit.com. '
+        + 'Sites are recognised from the browser’s window title and its history on this computer, so a page can show for a moment before it is covered. '
+        + (settings.recordWebsites ? '' : 'History is read while lockdown is on, even with website names turned off.') }));
+
+    return h('div', { class: 'page-inner' },
+      header,
+      h('div', { class: 'page-body' },
+        h('div', { class: 'focus' }, lockdown, blockList)));
   }
 
   /* ---------- settings ---------- */
@@ -1194,7 +1306,8 @@
         `Restart to update to ${update.version}`)
       : null;
 
-    host.replaceChildren(ready, h('div', { class: 'state' },
+    // replaceChildren writes a null argument out as the text "null".
+    host.replaceChildren(...[ready].filter(Boolean), h('div', { class: 'state' },
       h('div', { class: 'state-head' },
         h('span', { class: `dot${copy.dot ? '' : ' hollow'}` }),
         h('span', { class: 'state-label', text: copy.label, title: copy.label })),
@@ -1228,7 +1341,8 @@
     const page = state.route === 'apps' ? renderApps(snap)
       : state.route === 'sites' ? renderSites(snap)
         : state.route === 'settings' ? renderSettings(snap)
-          : renderToday(snap);
+          : state.route === 'focus' ? renderFocus(snap)
+            : renderToday(snap);
     if (state.enter) {
       page.classList.add('enter');
       state.enter = false;
@@ -1278,7 +1392,7 @@
   async function refresh() {
     try {
       const active = document.activeElement;
-      const editing = state.route === 'settings' && active && view.contains(active) && /^(SELECT|INPUT)$/.test(active.tagName);
+      const editing = (state.route === 'settings' || state.route === 'focus') && active && view.contains(active) && /^(SELECT|INPUT)$/.test(active.tagName);
       state.snapshot = await api.snapshot();
       if (!editing) render();
       else renderRailState();
@@ -1325,7 +1439,7 @@
 
   function readRoute() {
     const hash = window.location.hash.replace(/^#\/?/, '');
-    return ['today', 'apps', 'sites', 'settings'].includes(hash) ? hash : 'today';
+    return ['today', 'apps', 'sites', 'focus', 'settings'].includes(hash) ? hash : 'today';
   }
 
   window.addEventListener('hashchange', () => {
@@ -1347,6 +1461,7 @@
   api.onChanged(() => {
     if (!document.hidden) refresh();
   });
+  if (api.onNavigate) api.onNavigate((route) => go(route));
   setInterval(() => {
     if (!document.hidden) refresh();
   }, 60000);
@@ -1362,6 +1477,7 @@
     const settings = {
       sampleSeconds: 5, idleSeconds: 120, mediaCeilingMinutes: 120, paused: false,
       recordWebsites: true, launchAtLogin: false, autoUpdate: true, retentionDays: 90, browsers: null,
+      focusLockdown: false, blockedSites: [],
       theme: { preset: 'default', accent: '', ground: '', text: '' },
     };
     const browserList = [

@@ -39,6 +39,37 @@ func TestRecordAggregateAndReload(t *testing.T) {
 	}
 }
 
+func TestBlockedSitesAreNormalized(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "tally-data.json")
+	s, err := Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Settings(); got.FocusLockdown || got.BlockedSites == nil || len(got.BlockedSites) != 0 {
+		t.Fatalf("unexpected defaults: %+v", got)
+	}
+	got := s.UpdateSettings(map[string]any{"focusLockdown": true, "blockedSites": []any{
+		"https://www.Reddit.com/r/all", "*.youtube.com", "reddit.com", "not a site", "localhost", 42, "user@x.com:8080",
+	}})
+	want := []string{"reddit.com", "youtube.com", "x.com"}
+	if !got.FocusLockdown || len(got.BlockedSites) != len(want) {
+		t.Fatalf("unexpected settings: %+v", got)
+	}
+	for i := range want {
+		if got.BlockedSites[i] != want[i] {
+			t.Fatalf("blockedSites = %v, want %v", got.BlockedSites, want)
+		}
+	}
+	s.Flush()
+	reloaded, err := Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again := reloaded.Settings(); !again.FocusLockdown || len(again.BlockedSites) != 3 {
+		t.Fatalf("reloaded settings: %+v", again)
+	}
+}
+
 func TestSettingsPatchNormalizesValues(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "tally-data.json"))
 	if err != nil {

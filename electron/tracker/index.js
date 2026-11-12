@@ -83,7 +83,9 @@ class Tracker extends EventEmitter {
     this.clearTimer();
   }
 
+  // While suspended, wake() starts fresh with the current settings anyway.
   restart() {
+    if (this.suspended) return;
     this.stop();
     this.start();
   }
