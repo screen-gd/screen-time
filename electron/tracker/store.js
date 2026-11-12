@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { normalizeSiteList } = require('../blocklist');
 
 const DEFAULTS = {
   version: 1,
@@ -17,6 +18,8 @@ const DEFAULTS = {
     theme: { preset: 'default', accent: '', ground: '', text: '' },
     retentionDays: 90,
     browsers: null, // null means every detected browser
+    focusLockdown: false,
+    blockedSites: [], // hostnames covered while focusLockdown is on
   },
   days: {},
 };
@@ -94,6 +97,8 @@ class Store {
     next.launchAtLogin = Boolean(next.launchAtLogin);
     next.autoUpdate = next.autoUpdate !== false;
     next.browsers = Array.isArray(next.browsers) ? next.browsers.map(String) : null;
+    next.focusLockdown = Boolean(next.focusLockdown);
+    next.blockedSites = normalizeSiteList(next.blockedSites);
     const theme = next.theme && typeof next.theme === 'object' ? next.theme : {};
     next.theme = {
       preset: THEME_PRESETS.has(theme.preset) ? theme.preset : 'default',

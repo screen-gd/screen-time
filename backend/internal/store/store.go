@@ -30,6 +30,8 @@ type Settings struct {
 	Theme               Theme    `json:"theme"`
 	RetentionDays       int      `json:"retentionDays"`
 	Browsers            []string `json:"browsers"`
+	FocusLockdown       bool     `json:"focusLockdown"`
+	BlockedSites        []string `json:"blockedSites"`
 }
 
 type App struct {
@@ -83,7 +85,7 @@ func defaultSettings() Settings {
 	return Settings{
 		SampleSeconds: 5, IdleSeconds: 120, MediaCeilingMinutes: &ceiling,
 		RecordWebsites: true, AutoUpdate: true, Theme: Theme{Preset: "default"},
-		RetentionDays: 90,
+		RetentionDays: 90, BlockedSites: []string{},
 	}
 }
 
@@ -142,6 +144,7 @@ func normalizeSettings(in, defaults Settings) Settings {
 		copied := append([]string(nil), in.Browsers...)
 		in.Browsers = copied
 	}
+	in.BlockedSites = normalizeSiteList(in.BlockedSites)
 	return in
 }
 
@@ -211,6 +214,17 @@ func (s *Store) UpdateSettings(patch map[string]any) Settings {
 			next.Browsers = make([]string, 0, len(list))
 			for _, item := range list {
 				next.Browsers = append(next.Browsers, asString(item, ""))
+			}
+		}
+	}
+	if value, ok := patch["focusLockdown"]; ok {
+		next.FocusLockdown = asBool(value, next.FocusLockdown)
+	}
+	if value, ok := patch["blockedSites"]; ok {
+		next.BlockedSites = nil
+		if list, ok := value.([]any); ok {
+			for _, item := range list {
+				next.BlockedSites = append(next.BlockedSites, asString(item, ""))
 			}
 		}
 	}

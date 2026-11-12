@@ -261,13 +261,14 @@ async function readProfile(profile, limit = 500) {
   }
 }
 
-async function lookup(browser, cleanedTitle) {
+// A guess from the latest visit is cached only briefly: the page it names may not be the one in front.
+async function lookup(browser, cleanedTitle, { negativeMs = NEGATIVE_MS } = {}) {
   const title = String(cleanedTitle || '').trim();
   if (!title || GENERIC.has(normalizeTitle(title))) return null;
 
   const key = `${browser.id}|${normalizeTitle(title)}`;
   const cached = cache.get(key);
-  if (cached && Date.now() - cached.at < (cached.value ? CACHE_MS : NEGATIVE_MS)) return cached.value;
+  if (cached && Date.now() - cached.at < (cached.value && !cached.value.guessed ? CACHE_MS : negativeMs)) return cached.value;
 
   const profiles = discoverProfiles().filter((p) => p.browserId === browser.id).slice(0, 4);
   if (!profiles.length) {
@@ -300,7 +301,7 @@ async function lookup(browser, cleanedTitle) {
     try {
       const rows = await readProfile(profiles[0], 40);
       const recent = rows.find((row) => Date.now() - row.visitedAt < 5 * 60 * 1000);
-      if (recent) best = { total: 10, row: recent, profile: profiles[0] };
+      if (recent) best = { total: 10, row: recent, profile: profiles[0], guessed: true };
     } catch {
       // no fallback available
     }
@@ -319,6 +320,7 @@ async function lookup(browser, cleanedTitle) {
     browser: browser.name,
     browserId: browser.id,
     visitedAt: best.row.visitedAt,
+    guessed: Boolean(best.guessed),
   };
   if (cache.size > 400) cache.clear();
   cache.set(key, { value, at: Date.now() });

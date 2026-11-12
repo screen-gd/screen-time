@@ -17,4 +17,9 @@ contextBridge.exposeInMainWorld('tally', {
     ipcRenderer.on('tally:changed', listener);
     return () => ipcRenderer.removeListener('tally:changed', listener);
   },
+  onNavigate: (callback) => {
+    const listener = (_event, route) => callback(route);
+    ipcRenderer.on('tally:navigate', listener);
+    return () => ipcRenderer.removeListener('tally:navigate', listener);
+  },
 });

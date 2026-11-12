@@ -10,6 +10,8 @@ const { Tracker } = require('./tracker');
 const browsers = require('./tracker/browsers');
 const { Updater } = require('./updater');
 const { BackendStore, startBackend, stopBackend } = require('./backend-client');
+const { FocusGuard } = require('./focus');
+const { FocusCover } = require('./focus-cover');
 
 const ROOT = path.join(__dirname, '..');
 const DEMO = process.env.TALLY_DEMO === '1' || process.argv.includes('--demo');
@@ -36,6 +38,8 @@ let rebuildTrayMenu = null;
 let backendRuntime = null;
 let remoteBackend = false;
 let trackingHeartbeat = null;
+let focusCover = null;
+let focusGuard = null;
 
 function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -116,15 +120,17 @@ function localSnapshot() {
 }
 
 // Recreate the frontend on demand; closing it releases its renderer.
-function showWindow() {
+function showWindow(route = null) {
+  if (typeof route !== 'string') route = null;
   if (!win) {
-    createWindow();
+    createWindow(route);
     win.once('ready-to-show', () => { win.show(); win.focus(); });
     return;
   }
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+  if (route) send('tally:navigate', route);
 }
 
 async function snapshot() {
@@ -142,7 +148,7 @@ async function snapshot() {
   return result;
 }
 
-function createWindow() {
+function createWindow(route = null) {
   nativeTheme.themeSource = 'dark';
   const shotWidth = SCREENSHOT ? Number(process.env.TALLY_WIDTH) || 0 : 0;
   const shotHeight = SCREENSHOT ? Number(process.env.TALLY_HEIGHT) || 0 : 0;
@@ -166,8 +172,8 @@ function createWindow() {
     },
   });
 
-  win.loadFile(path.join(ROOT, 'app', 'index.html'),
-    SCREENSHOT && process.env.TALLY_ROUTE ? { hash: `/${process.env.TALLY_ROUTE}` } : undefined);
+  const startRoute = SCREENSHOT ? process.env.TALLY_ROUTE : route;
+  win.loadFile(path.join(ROOT, 'app', 'index.html'), startRoute ? { hash: `/${startRoute}` } : undefined);
   win.once('ready-to-show', () => {
     if (!process.argv.includes('--hidden') && !SCREENSHOT && !openedAtLogin()) win.show();
   });
@@ -247,6 +253,19 @@ function createTray() {
           send('tally:changed', { at: Date.now() });
         },
       },
+      {
+        label: store.settings.focusLockdown ? 'Turn off Focus lockdown' : 'Turn on Focus lockdown',
+        // Turning it on with nothing to block would do nothing; the window is where the list is edited.
+        click: async () => {
+          const hasSites = Array.isArray(store.settings.blockedSites) && store.settings.blockedSites.length > 0;
+          if (!store.settings.focusLockdown && !hasSites) {
+            showWindow('focus');
+            return;
+          }
+          await applySettings({ focusLockdown: !store.settings.focusLockdown });
+          send('tally:changed', { at: Date.now() });
+        },
+      },
       ...(updater && updater.state.status === 'ready'
         ? [{ type: 'separator' }, { label: `Restart to update to ${updater.state.version}`, click: () => updater.install() }]
         : []),
@@ -312,25 +331,40 @@ function applyLoginItem(settings) {
   }
 }
 
+// Every settings change, from the window or the tray, goes through here so its side effects follow.
+async function applySettings(patch) {
+  const before = { ...store.settings };
+  const result = await store.updateSettings(patch);
+  const settings = result.settings || result;
+  if (settings.launchAtLogin !== before.launchAtLogin) applyLoginItem(settings);
+  if (settings.autoUpdate !== before.autoUpdate && updater) updater.setEnabled(updatesAllowed(settings));
+  if (settings.sampleSeconds !== before.sampleSeconds) tracker.restart();
+  if (focusGuard) focusGuard.sync();
+  if (settings.paused !== before.paused || settings.focusLockdown !== before.focusLockdown) {
+    send('tally:changed', { at: Date.now() });
+    if (rebuildTrayMenu) rebuildTrayMenu();
+  }
+  if (settings.paused !== before.paused && tray) {
+    tray.setToolTip(settings.paused ? 'screen-time - tracking paused' : 'screen-time - screen time');
+  }
+  return { settings, tracking: result.tracking || tracker.getStatus() };
+}
+
 function registerIpc() {
   ipcMain.handle('tally:snapshot', () => snapshot());
   ipcMain.handle('tally:range', async (_event, days) => {
     const count = [1, 7, 30].includes(Number(days)) ? Number(days) : 1;
     return remoteBackend ? store.range(count) : store.aggregate(count);
   });
-  ipcMain.handle('tally:settings:update', async (_event, patch) => {
-    const before = { ...store.settings };
-    const result = await store.updateSettings(patch && typeof patch === 'object' ? patch : {});
-    const settings = result.settings || result;
-    if (settings.launchAtLogin !== before.launchAtLogin) applyLoginItem(settings);
-    if (settings.autoUpdate !== before.autoUpdate && updater) updater.setEnabled(updatesAllowed(settings));
-    if (settings.sampleSeconds !== before.sampleSeconds) tracker.restart();
-    if (settings.paused !== before.paused) {
-      send('tally:changed', { at: Date.now() });
-      if (rebuildTrayMenu) rebuildTrayMenu();
-      if (tray) tray.setToolTip(settings.paused ? 'screen-time - tracking paused' : 'screen-time - screen time');
-    }
-    return { settings, tracking: result.tracking || tracker.getStatus() };
+  ipcMain.handle('tally:settings:update', (event, patch) => {
+    // The cover's renderer has no business changing settings.
+    if (focusCover && focusCover.owns(event.sender)) return null;
+    return applySettings(patch && typeof patch === 'object' ? patch : {});
+  });
+  ipcMain.handle('tally:focus:open-app', () => {
+    if (focusCover) focusCover.hide();
+    showWindow('focus');
+    return true;
   });
   ipcMain.handle('tally:clear', async () => {
     await store.clear();
@@ -435,6 +469,13 @@ if (!app.requestSingleInstanceLock()) {
     powerMonitor.on('unlock-screen', () => tracker.wake());
     powerMonitor.on('resume', () => tracker.wake());
 
+    // Demo and screenshot runs never cover the screen.
+    if (!DEMO && !SCREENSHOT) {
+      focusCover = new FocusCover({ root: ROOT });
+      focusGuard = new FocusGuard({ store, cover: focusCover });
+      focusGuard.sync();
+    }
+
     applyLoginItem(store.settings);
     registerIpc();
     if ((!process.argv.includes('--hidden') && !(process.platform === 'darwin' && openedAtLogin())) || SCREENSHOT) createWindow();
@@ -453,6 +494,8 @@ if (!app.requestSingleInstanceLock()) {
     if (backendStopping) { event.preventDefault(); return; }
     if (tracker) tracker.stop();
     if (trackingHeartbeat) clearInterval(trackingHeartbeat);
+    if (focusGuard) focusGuard.stop();
+    if (focusCover) focusCover.destroy();
     if (store) store.flush();
     const child = backendRuntime && backendRuntime.process;
     if (!child) return;
