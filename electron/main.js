@@ -340,6 +340,12 @@ async function applySettings(patch) {
   const before = { ...store.settings };
   const result = await store.updateSettings(patch);
   const settings = result.settings || result;
+  settingsChanged(before, settings);
+  return { settings, tracking: result.tracking || tracker.getStatus() };
+}
+
+// The desktop side effects of a settings change, wherever the change came from.
+function settingsChanged(before, settings) {
   if (settings.launchAtLogin !== before.launchAtLogin) applyLoginItem(settings);
   if (settings.autoUpdate !== before.autoUpdate && updater) updater.setEnabled(updatesAllowed(settings));
   if (settings.sampleSeconds !== before.sampleSeconds) tracker.restart();
@@ -351,7 +357,6 @@ async function applySettings(patch) {
   if (settings.paused !== before.paused && tray) {
     tray.setToolTip(settings.paused ? 'screen-time - tracking paused' : 'screen-time - screen time');
   }
-  return { settings, tracking: result.tracking || tracker.getStatus() };
 }
 
 function registerIpc() {
@@ -477,17 +482,12 @@ if (!app.requestSingleInstanceLock()) {
       focusCover = new FocusCover({ root: ROOT });
       focusGuard = new FocusGuard({ store, cover: focusCover });
       focusGuard.sync();
-      // The browser UI changes settings on the backend directly; poll so lockdown follows it.
+      // The browser UI changes settings on the backend directly; poll so the desktop follows it.
       if (remoteBackend) {
         settingsPoll = setInterval(async () => {
           const before = store.settings;
           try { await store.refreshSettings(); } catch { return; }
-          focusGuard.sync();
-          const after = store.settings;
-          if (before.focusLockdown !== after.focusLockdown || before.paused !== after.paused) {
-            if (rebuildTrayMenu) rebuildTrayMenu();
-            send('tally:changed', { at: Date.now() });
-          }
+          settingsChanged(before, store.settings);
         }, SETTINGS_POLL_MS);
         if (settingsPoll.unref) settingsPoll.unref();
       }
