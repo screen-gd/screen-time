@@ -44,7 +44,8 @@ function titleEntry(title, list) {
   if (!text) return null;
   return list.find((entry) => {
     const escaped = entry.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(^|[^a-z0-9-])([a-z0-9-]+\\.)*${escaped}($|[^a-z0-9-])`).test(text);
+    // The end must not run on into a longer hostname: reddit.com.au is not reddit.com.
+    return new RegExp(`(^|[^a-z0-9-])([a-z0-9-]+\\.)*${escaped}(?![a-z0-9-]|\\.[a-z0-9])`).test(text);
   }) || null;
 }
 

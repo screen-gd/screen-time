@@ -8,9 +8,11 @@ const { normalizeSiteList, blockedEntry, titleEntry } = require('./blocklist');
 // Faster than the tracker's sampling so a blocked page is covered within about a second.
 const POLL_MS = 1000;
 
-// The history fallback in browsers.lookup guesses from the latest visit when no
-// title matches; only trust that guess while the visit is this fresh.
-const GUESS_MAX_AGE_MS = 60 * 1000;
+// A history answer covers the page only if the title matched it closely, or the
+// visit is this fresh. A loose match to an old visit (or the latest-visit guess
+// from browsers.lookup) can name a blocked site the browser is no longer on.
+const FRESH_VISIT_MS = 60 * 1000;
+const STRONG_MATCH = 90;
 
 // A new page may not be in history yet; ask again this soon rather than after
 // the tracker's 45-second negative cache.
@@ -82,8 +84,13 @@ class FocusGuard {
       }
       const list = normalizeSiteList(this.store.settings.blockedSites);
       const foreground = this.readWindow();
-      // An unreadable window, the cover or screen-time itself: leave things as they are.
-      if (!foreground || foreground.error || foreground.pid === this.selfPid) return;
+      if (!foreground || foreground.error) return;
+      // screen-time's own window in front: lift the cover so it can be used. A click
+      // on the cover itself also lands here, and must not dismiss it.
+      if (foreground.pid === this.selfPid) {
+        if (!(this.cover.isFocused && this.cover.isFocused())) this.clear();
+        return;
+      }
       const { browser } = this.identifyApp(foreground);
       if (!browser) {
         this.clear();
@@ -94,7 +101,8 @@ class FocusGuard {
       if (!site) {
         let found = null;
         try { found = await this.lookup(browser, title, { negativeMs: LOOKUP_RETRY_MS }); } catch { found = null; }
-        const trusted = found && (!found.guessed || Date.now() - found.visitedAt < GUESS_MAX_AGE_MS);
+        const fresh = found && Date.now() - found.visitedAt < FRESH_VISIT_MS;
+        const trusted = found && (fresh || (!found.guessed && found.match >= STRONG_MATCH));
         if (trusted) site = blockedEntry(found.domain, list);
       }
       // Lockdown may have been turned off while history was read.

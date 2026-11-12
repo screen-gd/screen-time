@@ -318,6 +318,8 @@ async function main() {
     assert.equal(titleEntry('Home / X', list), null);
     assert.equal(titleEntry('Inbox - netflix.company.org', ['company.org']), 'company.org');
     assert.equal(titleEntry('myreddit.com', list), null);
+    assert.equal(titleEntry('reddit.com.au - news', list), null);
+    assert.equal(titleEntry('Reading reddit.com. Then work', list), 'reddit.com');
   });
 
   await scenario('the local store keeps lockdown settings', async () => {
@@ -347,7 +349,7 @@ async function main() {
   await scenario('lockdown covers a blocked site and lifts when it leaves', async () => {
     const settings = { focusLockdown: true, blockedSites: ['reddit.com'] };
     const foreground = { current: { pid: 7, exePath: 'C:\\chrome.exe', title: 'r/all - Google Chrome' } };
-    const found = { current: { domain: 'old.reddit.com', visitedAt: clock } };
+    const found = { current: { domain: 'old.reddit.com', match: 100, visitedAt: clock - 3600000 } };
     const { guard, cover, lookups } = makeGuard({ settings, foreground, found });
     await guard.check();
     assert.equal(cover.shown, 'reddit.com');
@@ -364,15 +366,35 @@ async function main() {
     assert.equal(cover.shown, null, 'a non-browser app lifts the cover');
   });
 
-  await scenario('lockdown leaves the cover alone while screen-time is in front', async () => {
+  await scenario('screen-time in front lifts the cover, a click on the cover does not', async () => {
     const settings = { focusLockdown: true, blockedSites: ['reddit.com'] };
     const foreground = { current: { pid: 7, exePath: 'chrome', title: 'reddit.com' } };
     const { guard, cover } = makeGuard({ settings, foreground, found: { current: null } });
     await guard.check();
     assert.equal(cover.shown, 'reddit.com', 'an address in the title is enough');
+    cover.focused = true;
+    cover.isFocused = function () { return this.focused; };
     foreground.current = { pid: 1, exePath: 'screen-time', title: 'Focus lockdown' };
     await guard.check();
-    assert.equal(cover.shown, 'reddit.com');
+    assert.equal(cover.shown, 'reddit.com', 'the cover itself was clicked');
+    cover.focused = false;
+    await guard.check();
+    assert.equal(cover.shown, null, 'the main window is in front');
+    foreground.current = { pid: 7, exePath: 'chrome', title: 'reddit.com' };
+    await guard.check();
+    assert.equal(cover.shown, 'reddit.com', 'back to the blocked page');
+  });
+
+  await scenario('a loose title match to an old visit does not cover the page', async () => {
+    const settings = { focusLockdown: true, blockedSites: ['reddit.com'] };
+    const foreground = { current: { pid: 7, exePath: 'chrome', title: 'Weekly notes' } };
+    const found = { current: { domain: 'reddit.com', match: 45, visitedAt: clock - 3 * 3600000 } };
+    const { guard, cover } = makeGuard({ settings, foreground, found });
+    await guard.check();
+    assert.equal(cover.shown, null);
+    found.current.match = 100;
+    await guard.check();
+    assert.equal(cover.shown, 'reddit.com', 'an exact title match still counts, however old');
   });
 
   await scenario('lockdown off or an empty list covers nothing', async () => {

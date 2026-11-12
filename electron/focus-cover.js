@@ -81,6 +81,13 @@ class FocusCover {
     }
   }
 
+  isFocused() {
+    for (const win of this.windows.values()) {
+      if (!win.isDestroyed() && win.isVisible() && win.isFocused()) return true;
+    }
+    return false;
+  }
+
   owns(webContents) {
     for (const win of this.windows.values()) {
       if (!win.isDestroyed() && win.webContents === webContents) return true;

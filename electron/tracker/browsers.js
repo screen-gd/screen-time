@@ -290,7 +290,7 @@ async function lookup(browser, cleanedTitle, { negativeMs = NEGATIVE_MS } = {}) 
       if (!score) continue;
       const ageMinutes = Math.max(0, (now - row.visitedAt) / 60000);
       const total = score - Math.min(ageMinutes / 8, 18);
-      if (!best || total > best.total) best = { total, row, profile };
+      if (!best || total > best.total) best = { total, match: score, row, profile };
     }
     if (best && best.total >= 70) break;
   }
@@ -301,7 +301,7 @@ async function lookup(browser, cleanedTitle, { negativeMs = NEGATIVE_MS } = {}) 
     try {
       const rows = await readProfile(profiles[0], 40);
       const recent = rows.find((row) => Date.now() - row.visitedAt < 5 * 60 * 1000);
-      if (recent) best = { total: 10, row: recent, profile: profiles[0], guessed: true };
+      if (recent) best = { total: 10, match: 0, row: recent, profile: profiles[0], guessed: true };
     } catch {
       // no fallback available
     }
@@ -321,6 +321,7 @@ async function lookup(browser, cleanedTitle, { negativeMs = NEGATIVE_MS } = {}) 
     browserId: browser.id,
     visitedAt: best.row.visitedAt,
     guessed: Boolean(best.guessed),
+    match: best.match, // title similarity before the age penalty, 0-100
   };
   if (cache.size > 400) cache.clear();
   cache.set(key, { value, at: Date.now() });

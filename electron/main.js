@@ -40,6 +40,8 @@ let remoteBackend = false;
 let trackingHeartbeat = null;
 let focusCover = null;
 let focusGuard = null;
+let settingsPoll = null;
+const SETTINGS_POLL_MS = 3000;
 
 function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -122,6 +124,8 @@ function localSnapshot() {
 // Recreate the frontend on demand; closing it releases its renderer.
 function showWindow(route = null) {
   if (typeof route !== 'string') route = null;
+  // The cover sits above every window; it comes back if the blocked page returns to the front.
+  if (focusCover) focusCover.hide();
   if (!win) {
     createWindow(route);
     win.once('ready-to-show', () => { win.show(); win.focus(); });
@@ -362,7 +366,6 @@ function registerIpc() {
     return applySettings(patch && typeof patch === 'object' ? patch : {});
   });
   ipcMain.handle('tally:focus:open-app', () => {
-    if (focusCover) focusCover.hide();
     showWindow('focus');
     return true;
   });
@@ -474,6 +477,20 @@ if (!app.requestSingleInstanceLock()) {
       focusCover = new FocusCover({ root: ROOT });
       focusGuard = new FocusGuard({ store, cover: focusCover });
       focusGuard.sync();
+      // The browser UI changes settings on the backend directly; poll so lockdown follows it.
+      if (remoteBackend) {
+        settingsPoll = setInterval(async () => {
+          const before = store.settings;
+          try { await store.refreshSettings(); } catch { return; }
+          focusGuard.sync();
+          const after = store.settings;
+          if (before.focusLockdown !== after.focusLockdown || before.paused !== after.paused) {
+            if (rebuildTrayMenu) rebuildTrayMenu();
+            send('tally:changed', { at: Date.now() });
+          }
+        }, SETTINGS_POLL_MS);
+        if (settingsPoll.unref) settingsPoll.unref();
+      }
     }
 
     applyLoginItem(store.settings);
@@ -494,6 +511,7 @@ if (!app.requestSingleInstanceLock()) {
     if (backendStopping) { event.preventDefault(); return; }
     if (tracker) tracker.stop();
     if (trackingHeartbeat) clearInterval(trackingHeartbeat);
+    if (settingsPoll) clearInterval(settingsPoll);
     if (focusGuard) focusGuard.stop();
     if (focusCover) focusCover.destroy();
     if (store) store.flush();

@@ -71,6 +71,31 @@ func TestRecordAndSnapshotWithToken(t *testing.T) {
 	}
 }
 
+func TestSettingsReadBack(t *testing.T) {
+	server := newTestServer(t, "")
+	auth := map[string]string{TokenHeader: testToken, "Content-Type": "application/json"}
+	response := do(t, http.MethodPatch, server.URL+"/api/v1/settings", `{"focusLockdown":true,"blockedSites":["https://reddit.com/r/all"]}`, auth)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("patch status = %d", response.StatusCode)
+	}
+	response = do(t, http.MethodGet, server.URL+"/api/v1/settings", "", auth)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("get status = %d", response.StatusCode)
+	}
+	var body struct {
+		Settings store.Settings `json:"settings"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Settings.FocusLockdown || len(body.Settings.BlockedSites) != 1 || body.Settings.BlockedSites[0] != "reddit.com" {
+		t.Fatalf("unexpected settings: %+v", body.Settings)
+	}
+	if response := do(t, http.MethodGet, server.URL+"/api/v1/settings", "", nil); response.StatusCode == http.StatusOK {
+		t.Fatal("settings read without a token")
+	}
+}
+
 func TestAPIRequiresToken(t *testing.T) {
 	server := newTestServer(t, "")
 	for _, tc := range []struct{ method, path, body string }{

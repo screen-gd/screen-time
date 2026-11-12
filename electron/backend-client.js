@@ -63,6 +63,13 @@ class BackendStore {
     return result;
   }
 
+  // Picks up changes made from the browser UI, which talks to the backend directly.
+  async refreshSettings() {
+    const result = await request(this.baseUrl, '/api/v1/settings', {}, this.token);
+    this.settings = result.settings;
+    return this.settings;
+  }
+
   record(sample) {
     // Keep sampling non-blocking while serialising writes to preserve data order.
     this.pendingRecords = this.pendingRecords

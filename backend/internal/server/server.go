@@ -196,6 +196,8 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 			days = 1
 		}
 		s.write(w, http.StatusOK, s.store.Aggregate(days, time.Now()))
+	case path == "/api/v1/settings" && r.Method == http.MethodGet:
+		s.write(w, http.StatusOK, map[string]any{"settings": s.store.Settings()})
 	case path == "/api/v1/settings" && r.Method == http.MethodPatch:
 		var patch map[string]any
 		if !s.decode(w, r, &patch) {
