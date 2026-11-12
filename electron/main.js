@@ -447,11 +447,24 @@ if (!app.requestSingleInstanceLock()) {
     // keep tracking from the tray until Quit is chosen
   });
 
-  app.on('before-quit', () => {
+  let backendStopping = false;
+  app.on('before-quit', (event) => {
     app.isQuitting = true;
+    if (backendStopping) { event.preventDefault(); return; }
     if (tracker) tracker.stop();
     if (trackingHeartbeat) clearInterval(trackingHeartbeat);
     if (store) store.flush();
-    stopBackend(backendRuntime && backendRuntime.process);
+    const child = backendRuntime && backendRuntime.process;
+    if (!child) return;
+    // Hold the quit until queued samples reach the backend and it has saved them.
+    event.preventDefault();
+    backendStopping = true;
+    Promise.resolve(store.pendingRecords).catch(() => {})
+      .then(() => stopBackend(child))
+      .finally(() => {
+        backendRuntime = null;
+        backendStopping = false;
+        app.quit();
+      });
   });
 }

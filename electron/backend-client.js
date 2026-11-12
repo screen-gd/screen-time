@@ -112,15 +112,17 @@ function startBackend({ root, dataFile, frontendDir }) {
   const binary = executableCandidates(root).find((candidate) => fs.existsSync(candidate));
   const backendRoot = path.join(root, 'backend');
   const command = binary || 'go';
-  const args = binary
-    ? ['--port', '0', '--data', dataFile, ...(frontendDir ? ['--frontend-dir', frontendDir] : [])]
-    : ['run', './cmd/tally-backend', '--port', '0', '--data', dataFile, ...(frontendDir ? ['--frontend-dir', frontendDir] : [])];
+  const backendArgs = ['--port', '0', '--data', dataFile, '--exit-with-stdin', ...(frontendDir ? ['--frontend-dir', frontendDir] : [])];
+  const args = binary ? backendArgs : ['run', './cmd/tally-backend', ...backendArgs];
+  // stdin stays open for the backend's lifetime: closing it (or Electron dying)
+  // tells the backend to save and exit.
   const child = spawn(command, args, {
     cwd: binary ? path.dirname(binary) : backendRoot,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
     env: { ...process.env, TALLY_BACKEND_DATA_FILE: dataFile, TALLY_BACKEND_TOKEN: token },
   });
+  child.stdin.on('error', () => {});
   return new Promise((resolve, reject) => {
     let settled = false;
     let output = '';
@@ -147,9 +149,15 @@ function startBackend({ root, dataFile, frontendDir }) {
   });
 }
 
-function stopBackend(child) {
-  if (!child || child.killed) return;
-  child.kill();
+// Resolves once the backend has saved and exited, killing it if it takes too long.
+function stopBackend(child, timeoutMs = 3000) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { child.kill(); resolve(); }, timeoutMs);
+    child.once('exit', () => { clearTimeout(timer); resolve(); });
+    if (child.stdin && !child.stdin.destroyed) child.stdin.end();
+    else child.kill();
+  });
 }
 
 module.exports = { BackendStore, request, startBackend, stopBackend };
