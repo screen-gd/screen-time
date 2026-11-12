@@ -12,6 +12,8 @@ async function check(hidden, backend = false) {
   let tray;
   let menu;
   let stopped = false;
+  let backendStopped = false;
+  let exited = false;
   class Window extends EventEmitter {
     constructor() {
       super();
@@ -30,7 +32,11 @@ async function check(hidden, backend = false) {
     requestSingleInstanceLock: () => true,
     whenReady: () => Promise.resolve(),
     setAppUserModelId() {}, setName() {}, setPath() {}, getPath: () => require('node:os').tmpdir(), setLoginItemSettings() {},
-    quit() { this.emit('before-quit'); },
+    quit() {
+      let prevented = false;
+      this.emit('before-quit', { preventDefault() { prevented = true; } });
+      if (!prevented) exited = true;
+    },
   });
   let totalSeconds = 7200;
   const store = {
@@ -67,8 +73,8 @@ async function check(hidden, backend = false) {
     './tracker/browsers': {},
     './backend-client': {
       BackendStore: class { constructor() { return store; } },
-      async startBackend() { if (!backend) throw Error('Local store test'); return { baseUrl: 'http://localhost' }; },
-      stopBackend() {},
+      async startBackend() { if (!backend) throw Error('Local store test'); return { baseUrl: 'http://localhost', process: {} }; },
+      async stopBackend(child) { if (!child) return; await new Promise(resolve => setImmediate(resolve)); backendStopped = true; },
     },
     './updater': { Updater: class { constructor() { this.state = {}; } } },
   };
@@ -96,6 +102,11 @@ async function check(hidden, backend = false) {
   assert(menu.some(item => item.label === 'Resume tracking'));
   menu.find(item => item.label === 'Quit').click();
   assert.equal(stopped, true);
+  // With a backend, the quit waits until it has saved and exited.
+  assert.equal(exited, !backend);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(backendStopped, backend);
+  assert.equal(exited, true);
 }
 
 (async () => {
