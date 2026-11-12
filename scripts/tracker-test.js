@@ -233,6 +233,9 @@ async function main() {
     tracker.suspend();
     assert.equal(tracker.suspended, true);
     assert.equal(tracker.timer, null);
+    tracker.restart();
+    assert.equal(tracker.suspended, true, 'a settings restart keeps a locked screen suspended');
+    assert.equal(tracker.timer, null);
     tracker.wake();
     assert.equal(tracker.suspended, false);
   });

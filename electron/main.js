@@ -337,15 +337,19 @@ function applyLoginItem(settings) {
 
 // Every settings change, from the window or the tray, goes through here so its side effects follow.
 async function applySettings(patch) {
-  const before = { ...store.settings };
   const result = await store.updateSettings(patch);
   const settings = result.settings || result;
-  settingsChanged(before, settings);
+  settingsChanged(settings);
   return { settings, tracking: result.tracking || tracker.getStatus() };
 }
 
 // The desktop side effects of a settings change, wherever the change came from.
-function settingsChanged(before, settings) {
+// Compared with what was last applied, not store.settings: a snapshot request
+// can refresh store.settings before the poll sees the change.
+let appliedSettings = null;
+function settingsChanged(settings) {
+  const before = appliedSettings || settings;
+  appliedSettings = { ...settings };
   if (settings.launchAtLogin !== before.launchAtLogin) applyLoginItem(settings);
   if (settings.autoUpdate !== before.autoUpdate && updater) updater.setEnabled(updatesAllowed(settings));
   if (settings.sampleSeconds !== before.sampleSeconds) tracker.restart();
@@ -477,6 +481,7 @@ if (!app.requestSingleInstanceLock()) {
     powerMonitor.on('unlock-screen', () => tracker.wake());
     powerMonitor.on('resume', () => tracker.wake());
 
+    appliedSettings = { ...store.settings };
     // Demo and screenshot runs never cover the screen.
     if (!DEMO && !SCREENSHOT) {
       focusCover = new FocusCover({ root: ROOT });
@@ -485,9 +490,8 @@ if (!app.requestSingleInstanceLock()) {
       // The browser UI changes settings on the backend directly; poll so the desktop follows it.
       if (remoteBackend) {
         settingsPoll = setInterval(async () => {
-          const before = store.settings;
           try { await store.refreshSettings(); } catch { return; }
-          settingsChanged(before, store.settings);
+          settingsChanged(store.settings);
         }, SETTINGS_POLL_MS);
         if (settingsPoll.unref) settingsPoll.unref();
       }
