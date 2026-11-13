@@ -829,6 +829,7 @@ button.trow:hover .chev { stroke: var(--text); }
 .chip .tile { width: 16px; height: 16px; border-radius: 4px; }
 .focus-goal { margin: 4px 0 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
 .focus-time { margin: 8px 0 2px; font-size: 44px; font-weight: 300; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.focus-chips-t { margin-top: 16px; }
 .focus-actions { padding: 14px 0 4px; }
 .snippet {
   margin: 10px 0; padding: 12px 14px; border-radius: 10px;

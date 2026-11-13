@@ -176,6 +176,12 @@ async function focusChanged() {
   const id = session ? session.id : null;
   const changed = id !== lastFocusId;
   lastFocusId = id;
+  // A start or end also flips focusLockdown on the backend; pull the settings
+  // at once so the guard and UI do not wait for the next poll.
+  if (changed && remoteBackend) {
+    try { await store.refreshSettings(); } catch { /* keep the last settings */ }
+    settingsChanged(store.settings);
+  }
   if (focusGuard) focusGuard.sync();
   if (changed) {
     send('tally:changed', { at: Date.now() });
@@ -298,7 +304,7 @@ function createTray() {
         {
           label: 'End focus session',
           click: async () => {
-            await store.endFocus('screen-time');
+            try { await store.endFocus('screen-time'); } catch { /* backend unreachable */ }
             await focusChanged();
           },
         },
@@ -425,15 +431,23 @@ function registerIpc() {
   });
   ipcMain.handle('tally:focus:start', async (event, input) => {
     if (focusCover && focusCover.owns(event.sender)) return null;
-    const result = await store.startFocus({ ...(input && typeof input === 'object' ? input : {}), source: 'screen-time' });
-    await focusChanged();
-    return result;
+    try {
+      const result = await store.startFocus({ ...(input && typeof input === 'object' ? input : {}), source: 'screen-time' });
+      await focusChanged();
+      return result;
+    } catch {
+      return { ok: false, status: 0, error: 'Could not reach screen-time’s backend.' };
+    }
   });
   ipcMain.handle('tally:focus:end', async (event) => {
     if (focusCover && focusCover.owns(event.sender)) return null;
-    const result = await store.endFocus('screen-time');
-    await focusChanged();
-    return result;
+    try {
+      const result = await store.endFocus('screen-time');
+      await focusChanged();
+      return result;
+    } catch {
+      return { ok: false, status: 0, error: 'Could not reach screen-time’s backend.' };
+    }
   });
   ipcMain.handle('tally:focus:catalog', async (event, days) => {
     if (focusCover && focusCover.owns(event.sender)) return null;

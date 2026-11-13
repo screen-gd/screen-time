@@ -903,12 +903,19 @@
     state.focusConflict = null;
     const minutes = FOCUS_LENGTHS.some(([value]) => value === Number(settings.focusMinutes)) ? Number(settings.focusMinutes) : 50;
     // Omitted app/site lists fall back to the saved lists for the mode.
-    const result = await api.startFocus({
-      goal,
-      durationSeconds: minutes * 60,
-      mode: settings.focusMode === 'block' ? 'block' : 'allow',
-      allowSites: state.allowSitesDraft.length ? state.allowSitesDraft : undefined,
-    });
+    let result;
+    try {
+      result = await api.startFocus({
+        goal,
+        durationSeconds: minutes * 60,
+        mode: settings.focusMode === 'block' ? 'block' : 'allow',
+        allowSites: state.allowSitesDraft.length ? state.allowSitesDraft : undefined,
+      });
+    } catch {
+      state.focusError = 'Could not reach screen-time’s backend. Try again.';
+      render();
+      return;
+    }
     if (result && result.ok) {
       state.focusGoal = '';
       await refresh();
@@ -924,7 +931,13 @@
   }
 
   async function endSession() {
-    await api.endFocus();
+    try {
+      await api.endFocus();
+    } catch {
+      state.focusError = 'Could not reach screen-time’s backend. Try again.';
+      render();
+      return;
+    }
     state.focusConflict = null;
     await refresh();
   }
@@ -949,7 +962,7 @@
 
     const chipGroup = (title, items, isApp) => (items || []).length
       ? [
-        h('div', { class: 'row-d', text: title }),
+        h('div', { class: 'row-d focus-chips-t', text: title }),
         h('div', { class: 'chips' }, items.map((item) => h('span', { class: 'chip' },
           isApp ? appGlyph(appLabel(item)) : siteGlyph(item),
           h('span', { text: isApp ? appLabel(item) : item })))),
@@ -1020,7 +1033,13 @@
           class: 'link-btn',
           type: 'button',
           onclick: async () => {
-            await api.endFocus();
+            try {
+              await api.endFocus();
+            } catch {
+              state.focusError = 'Could not reach screen-time’s backend. Try again.';
+              render();
+              return;
+            }
             state.focusConflict = null;
             await startSession();
           },
