@@ -116,6 +116,15 @@ async function main() {
     assert.deepEqual(judge(blocked, { app: { id: 'firefox', name: 'Firefox' }, browser: true, site: null, blank: false }), { kind: 'page', label: 'Firefox' });
   });
 
+  await scenario('a guessed site never opens a restricted browser', async () => {
+    const rules = rulesFor({}, session({ sites: ['github.com'] }), clock);
+    const app = { id: 'chrome', name: 'Google Chrome' };
+    assert.deepEqual(judge(rules, { app, browser: true, site: 'github.com', guessed: true }),
+      { kind: 'page', label: 'Google Chrome' }, 'a guessed listed site is judged like no site');
+    assert.equal(judge(rules, { app, browser: true, site: 'github.com', guessed: false }), null,
+      'a title-matched listed site stays open');
+  });
+
   await scenario('new-tab-like titles count as blank pages', async () => {
     for (const title of ['New tab', 'New Private Tab', 'new incognito tab', 'InPrivate', 'Private Browsing', 'Start Page', 'Speed Dial', 'Google Chrome', 'Mozilla Firefox']) {
       assert.equal(blankPage(title), true, title);

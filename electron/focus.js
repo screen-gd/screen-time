@@ -9,9 +9,9 @@ const { alwaysAllowed, rulesFor, judge, blankPage } = require('./focus-rules');
 // Faster than the tracker's sampling so a blocked page is covered within about a second.
 const POLL_MS = 1000;
 
-// A history answer is trusted only when the title actually matched it — a
-// fresh visit or a strong match. The latest-visit guess is never trusted:
-// it may belong to another tab while the title shows a different site.
+// A history answer covers the page only if the title matched it closely, or the
+// visit is this fresh. A loose match to an old visit (or the latest-visit guess
+// from browsers.lookup) can name a blocked site the browser is no longer on.
 const FRESH_VISIT_MS = 60 * 1000;
 const STRONG_MATCH = 90;
 
@@ -128,7 +128,7 @@ class FocusGuard {
           this.clear();
           return;
         }
-        verdict = judge(rules, { app, browser: true, site: seen.site, blank: seen.blank });
+        verdict = judge(rules, { app, browser: true, site: seen.site, guessed: seen.guessed, blank: seen.blank });
       }
       if (verdict && verdict.kind === 'page' && !this.pageGraceExpired(foreground)) verdict = null;
       if (verdict) this.block(verdict, rules, foreground);
@@ -139,19 +139,22 @@ class FocusGuard {
   }
 
   // Resolves the site a browser shows: the title first — a listed site it
-  // names wins outright, and fresher than any history — then the history
-  // lookup, whose answer must have matched the title to be trusted.
+  // names wins outright — then the history lookup. A guessed answer is
+  // flagged so judge can let it cover, never open: it may name a site from
+  // another tab while the title shows a different one.
   async readSite(foreground, identified, rules) {
     const title = cleanBrowserTitle(identified.browser, foreground.title);
     let site = titleEntry(foreground.title, [...rules.sites, ...rules.allowSites]);
+    let guessed = false;
     if (!site) {
       let found = null;
       try { found = await this.lookup(identified.browser, title, { negativeMs: LOOKUP_RETRY_MS }); } catch { found = null; }
       const fresh = found && Date.now() - found.visitedAt < FRESH_VISIT_MS;
-      const trusted = found && !found.guessed && (fresh || found.match >= STRONG_MATCH);
+      const trusted = found && (fresh || (!found.guessed && found.match >= STRONG_MATCH));
       if (trusted) site = normalizeSite(found.domain);
+      guessed = Boolean(trusted && found.guessed);
     }
-    return { site, blank: blankPage(title) };
+    return { site, guessed, blank: blankPage(title) };
   }
 
   // An unnamed page is covered only once the same window has stayed unknown

@@ -95,9 +95,10 @@ function appListed(apps, app) {
 
 // The verdict for the window in front: null lets it be, anything else is a
 // { kind: 'app'|'site'|'page', label } for the cover. `app` is
-// { id, name, bundleId, aumid }, `site` the normalized domain or null, `blank`
-// a new-tab-like page.
-function judge(rules, { app = {}, browser = false, site = null, blank = false }) {
+// { id, name, bundleId, aumid }, `site` the normalized domain or null,
+// `guessed` marks a site the history lookup guessed rather than matched in the
+// title — it may cover but never open — and `blank` a new-tab-like page.
+function judge(rules, { app = {}, browser = false, site = null, guessed = false, blank = false }) {
   if (!rules) return null;
   const label = app.name || app.id || 'This app';
   if (!browser) {
@@ -111,7 +112,9 @@ function judge(rules, { app = {}, browser = false, site = null, blank = false })
   if (restricted) {
     const open = rules.mode === 'allow' ? [...rules.sites, ...rules.allowSites] : rules.allowSites;
     if (!open.length) return { kind: 'app', label };
-    if (site) return blockedEntry(site, open) ? null : { kind: 'site', label: site };
+    // A guessed site opens nothing: it can belong to another tab, so it is
+    // judged like no site at all.
+    if (site && !guessed) return blockedEntry(site, open) ? null : { kind: 'site', label: site };
     if (blank) return null;
     return { kind: 'page', label };
   }
