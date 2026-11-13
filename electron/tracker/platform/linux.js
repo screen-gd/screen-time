@@ -56,6 +56,8 @@ function ensure() {
       XInternAtom: x11.func('unsigned long XInternAtom(void *display, const char *atom_name, int only_if_exists)'),
       // Window and Atom are C unsigned longs; Bool is int; longs are 8 bytes.
       XGetWindowProperty: x11.func('int XGetWindowProperty(void *display, unsigned long w, unsigned long property, long long_offset, long long_length, int delete, unsigned long req_type, _Out_ unsigned long *actual_type_return, _Out_ int *actual_format_return, _Out_ unsigned long *nitems_return, _Out_ unsigned long *bytes_after_return, _Out_ void **prop_return)'),
+      XGetGeometry: x11.func('int XGetGeometry(void *display, unsigned long w, _Out_ unsigned long *root, _Out_ int *x, _Out_ int *y, _Out_ unsigned int *width, _Out_ unsigned int *height, _Out_ unsigned int *border, _Out_ unsigned int *depth)'),
+      XTranslateCoordinates: x11.func('int XTranslateCoordinates(void *display, unsigned long src_w, unsigned long dest_w, int src_x, int src_y, _Out_ int *dest_x, _Out_ int *dest_y, _Out_ unsigned long *child)'),
       XFree: x11.func('int XFree(void *data)'),
       XSetErrorHandler: x11.func('void *XSetErrorHandler(tallyXErrorHandler *handler)'),
     };
@@ -74,7 +76,7 @@ function ensure() {
     atoms = {};
     for (const name of [
       '_NET_ACTIVE_WINDOW', '_NET_WM_PID', '_NET_WM_NAME', 'UTF8_STRING',
-      'WM_NAME', '_NET_WM_STATE', '_NET_WM_STATE_FULLSCREEN',
+      'WM_NAME', '_NET_WM_STATE', '_NET_WM_STATE_FULLSCREEN', '_NET_FRAME_EXTENTS',
     ]) {
       atoms[name] = Number(api.XInternAtom(display, name, 0));
     }
@@ -155,6 +157,39 @@ function identityOf(pid) {
   return record;
 }
 
+// The window's frame in physical pixels. XGetGeometry reports the client
+// rect relative to its parent; XTranslateCoordinates fixes the position on
+// the root and _NET_FRAME_EXTENTS widens it over the WM's decorations.
+function boundsOf(window) {
+  try {
+    const rw = [0];
+    const x = [0];
+    const y = [0];
+    const w = [0];
+    const h = [0];
+    const border = [0];
+    const depth = [0];
+    if (!api.XGetGeometry(display, window, rw, x, y, w, h, border, depth)) return null;
+    const rx = [0];
+    const ry = [0];
+    const child = [0];
+    if (!api.XTranslateCoordinates(display, window, root, 0, 0, rx, ry, child)) return null;
+    const extents = property(window, atoms._NET_FRAME_EXTENTS);
+    const frame = extents && extents.format === 32 && extents.items.length >= 4
+      ? extents.items
+      : [0, 0, 0, 0];
+    return {
+      x: rx[0] - frame[0],
+      y: ry[0] - frame[2],
+      width: w[0] + frame[0] + frame[1],
+      height: h[0] + frame[2] + frame[3],
+      unit: 'physical',
+    };
+  } catch {
+    return null;
+  }
+}
+
 function readForeground() {
   if (!ensure()) return { error: loadError.message };
   try {
@@ -163,7 +198,7 @@ function readForeground() {
     const pid = windowPid(window);
     const title = windowTitle(window);
     const identity = identityOf(pid);
-    return { title, pid, exePath: identity.exePath, aumid: '', bundleId: '', name: '' };
+    return { title, pid, exePath: identity.exePath, aumid: '', bundleId: '', name: '', bounds: boundsOf(window) };
   } catch (error) {
     return { error: error.message };
   }

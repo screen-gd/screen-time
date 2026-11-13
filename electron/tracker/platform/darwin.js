@@ -41,6 +41,7 @@ function ensure() {
       AXUIElementCreateApplication: ax.func('void *AXUIElementCreateApplication(int pid)'),
       AXUIElementSetMessagingTimeout: ax.func('int AXUIElementSetMessagingTimeout(void *element, float timeout)'),
       AXUIElementCopyAttributeValue: ax.func('int AXUIElementCopyAttributeValue(void *element, void *attribute, _Out_ void **value)'),
+      AXValueGetValue: ax.func('bool AXValueGetValue(void *value, int type, _Out_ void *ptr)'),
       CFStringCreateWithCString: cf.func('void *CFStringCreateWithCString(void *alloc, const char *str, uint32_t encoding)'),
       CFStringGetCString: cf.func('bool CFStringGetCString(void *str, _Out_ uint8_t *buf, long size, uint32_t encoding)'),
       CFGetTypeID: cf.func('unsigned long CFGetTypeID(void *obj)'),
@@ -52,6 +53,8 @@ function ensure() {
       focusedWindow: api.CFStringCreateWithCString(null, 'AXFocusedWindow', UTF8),
       title: api.CFStringCreateWithCString(null, 'AXTitle', UTF8),
       fullscreen: api.CFStringCreateWithCString(null, 'AXFullScreen', UTF8),
+      position: api.CFStringCreateWithCString(null, 'AXPosition', UTF8),
+      size: api.CFStringCreateWithCString(null, 'AXSize', UTF8),
     };
     return true;
   } catch (error) {
@@ -126,6 +129,35 @@ function windowTitle() {
   }
 }
 
+const pointBuffer = Buffer.alloc(16);
+const sizeBuffer = Buffer.alloc(16);
+
+// The window's frame in screen points, which share Electron's dip units.
+// Both AXValue attributes decode as pairs of doubles; any failure is null.
+function boundsOf(win) {
+  try {
+    const out = [null];
+    if (api.AXUIElementCopyAttributeValue(win, attrs.position, out) !== 0 || !out[0]) return null;
+    const okPoint = api.AXValueGetValue(out[0], 1 /* kAXValueCGPointType */, pointBuffer);
+    api.CFRelease(out[0]);
+    if (!okPoint) return null;
+    out[0] = null;
+    if (api.AXUIElementCopyAttributeValue(win, attrs.size, out) !== 0 || !out[0]) return null;
+    const okSize = api.AXValueGetValue(out[0], 2 /* kAXValueCGSizeType */, sizeBuffer);
+    api.CFRelease(out[0]);
+    if (!okSize) return null;
+    return {
+      x: pointBuffer.readDoubleLE(0),
+      y: pointBuffer.readDoubleLE(8),
+      width: sizeBuffer.readDoubleLE(0),
+      height: sizeBuffer.readDoubleLE(8),
+      unit: 'dip',
+    };
+  } catch {
+    return null;
+  }
+}
+
 function readForeground() {
   if (!ensure()) return { error: loadError.message };
   const pool = api.poolPush();
@@ -137,9 +169,20 @@ function readForeground() {
     const bundleId = nsString(api.msgObj(front, api.sel('bundleIdentifier')));
     const url = api.msgObj(front, api.sel('bundleURL'));
     const exePath = url ? nsString(api.msgObj(url, api.sel('path'))) : '';
-    // Titles need the Accessibility grant; apps still count without it.
+    // Titles and bounds need the Accessibility grant; apps still count without it.
     const title = accessibilityTrusted() ? windowTitle() : '';
-    return { title, pid, exePath, aumid: '', bundleId, name };
+    let bounds = null;
+    if (accessibilityTrusted()) {
+      const win = focusedWindow();
+      if (win) {
+        try {
+          bounds = boundsOf(win);
+        } finally {
+          api.CFRelease(win);
+        }
+      }
+    }
+    return { title, pid, exePath, aumid: '', bundleId, name, bounds };
   } catch (error) {
     return { error: error.message };
   } finally {
