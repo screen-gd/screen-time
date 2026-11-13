@@ -918,6 +918,7 @@
     }
     if (result && result.ok) {
       state.focusGoal = '';
+      state.allowSitesDraft = [];
       await refresh();
       return;
     }
