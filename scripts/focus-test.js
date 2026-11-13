@@ -14,6 +14,7 @@ const { normalizeApp, normalizeAppList, appIdOf } = require('../electron/blockli
 const { alwaysAllowed, rulesFor, judge, blankPage } = require('../electron/focus-rules');
 const { FocusGuard, UNKNOWN_PAGE_MS } = require('../electron/focus');
 const { Store } = require('../electron/tracker/store');
+const { connectionPath, writeConnection, removeConnection } = require('../electron/connection-file');
 
 let clock = Date.parse('2026-11-14T10:00:00Z');
 Date.now = () => clock;
@@ -296,6 +297,38 @@ async function main() {
     const bad = store.updateSettings({ focusMode: 'everything', focusMinutes: 999 });
     assert.equal(bad.focusMode, 'allow');
     assert.equal(bad.focusMinutes, 50);
+  });
+
+  await scenario('the connection file lives at the contract path', async () => {
+    const env = { APPDATA: 'C:\\Users\\u\\AppData\\Roaming' };
+    assert.equal(connectionPath('win32', env, 'C:\\Users\\u'),
+      path.join('C:\\Users\\u\\AppData\\Roaming', 'screen-time', 'connection.json'));
+    assert.equal(connectionPath('darwin', {}, '/Users/u'),
+      path.join('/Users/u/Library/Application Support', 'screen-time', 'connection.json'));
+    assert.equal(connectionPath('linux', { XDG_CONFIG_HOME: '/xdg' }, '/home/u'),
+      path.join('/xdg', 'screen-time', 'connection.json'));
+    assert.equal(connectionPath('linux', {}, '/home/u'),
+      path.join('/home/u/.config', 'screen-time', 'connection.json'));
+    assert.equal(connectionPath('win32', { TALLY_CONNECTION_FILE: 'D:\\conn.json' }, 'C:\\u'), 'D:\\conn.json',
+      'the env override wins on every platform');
+  });
+
+  await scenario('the connection file is written and removed by pid', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tally-conn-'));
+    const file = path.join(dir, 'deep', 'connection.json');
+    writeConnection(file, { version: 1, url: 'http://127.0.0.1:1234', token: 'abc', pid: 42 });
+    const info = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.equal(info.token, 'abc');
+    if (process.platform !== 'win32') {
+      assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+    }
+    // A different owner must not delete a newer run's file.
+    removeConnection(file, 99);
+    assert.equal(fs.existsSync(file), true);
+    removeConnection(file, 42);
+    assert.equal(fs.existsSync(file), false);
+    // Removing a file that is already gone is not an error.
+    removeConnection(file, 42);
   });
 
   console.log(results.join('\n'));
