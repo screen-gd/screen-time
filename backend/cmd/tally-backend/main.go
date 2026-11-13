@@ -16,9 +16,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/screen-gd/screen-time/backend/internal/mcp"
 	"github.com/screen-gd/screen-time/backend/internal/server"
 	"github.com/screen-gd/screen-time/backend/internal/store"
 )
+
+// version is reported in the MCP server's initialize handshake; keep it in
+// step with package.json.
+const version = "1.3.0"
 
 func defaultDataFile() string {
 	if value := os.Getenv("TALLY_DATA_FILE"); value != "" {
@@ -55,6 +60,14 @@ func splitList(value string) []string {
 }
 
 func main() {
+	// `tally-backend mcp` runs the stdio MCP server for local agents instead of
+	// the HTTP backend: no listener, no data file, stdout is protocol-only.
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		log.SetOutput(os.Stderr)
+		mcp.New(version).Run(os.Stdin, os.Stdout)
+		return
+	}
+
 	defaultPort := 43821
 	if value := os.Getenv("TALLY_BACKEND_PORT"); value != "" {
 		fmt.Sscanf(value, "%d", &defaultPort)
