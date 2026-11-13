@@ -134,10 +134,11 @@ func Open(file string) (*Store, error) {
 		s.data.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	// A session that outlived the process still ends on time, and an expired one
-	// in the file is unwound and its lockdown restored on load.
+	// in the file is unwound and its lockdown restored on load. The timer arms
+	// after pruning: a fire during pruning would flush the map mid-write.
 	s.expireLocked()
-	s.watchSessionLocked()
 	s.pruneLocked(time.Now())
+	s.watchSessionLocked()
 	return s, nil
 }
 

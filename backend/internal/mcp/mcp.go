@@ -23,6 +23,7 @@ import (
 const (
 	protocolFallback = "2025-06-18"
 	notRunning       = "screen-time is not running. Open it and try again."
+	reservedSource   = `"screen-time" is reserved for the desktop app; use your own source name.`
 	tokenHeader      = "X-Tally-Token"
 )
 
@@ -167,7 +168,12 @@ func (s *Server) apiRequest(method, path string, body any) (int, map[string]any,
 	defer resp.Body.Close()
 	payload := map[string]any{}
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	_ = json.Unmarshal(raw, &payload)
+	// A non-empty body that is not JSON is reported, not treated as success.
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return 0, nil, errors.New("the app sent an unreadable answer")
+		}
+	}
 	return resp.StatusCode, payload, nil
 }
 
@@ -270,6 +276,9 @@ func (s *Server) startSession(args map[string]any) (any, error) {
 	if source == "" {
 		source = "agent"
 	}
+	if strings.EqualFold(source, "screen-time") {
+		return toolError(reservedSource), nil
+	}
 	body := map[string]any{"goal": goal, "source": source, "durationSeconds": math.Round(minutes * 60)}
 	for _, key := range []string{"mode", "apps", "sites", "allowSites"} {
 		if value, ok := args[key]; ok && value != nil {
@@ -299,6 +308,9 @@ func (s *Server) endSession(args map[string]any) (any, error) {
 	source := strings.TrimSpace(argString(args, "source"))
 	if source == "" {
 		source = "agent"
+	}
+	if strings.EqualFold(source, "screen-time") {
+		return toolError(reservedSource), nil
 	}
 	status, payload, err := s.apiRequest(http.MethodDelete, "/api/v1/focus/session?source="+url.QueryEscape(source), nil)
 	if errors.Is(err, errUnreachable) {

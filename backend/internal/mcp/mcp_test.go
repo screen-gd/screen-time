@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -171,6 +172,51 @@ func TestListsAndCatalogTools(t *testing.T) {
 	result = call(s, t, 3, "get_catalog", `{"days":1}`)
 	if _, ok := result["structuredContent"].(map[string]any)["apps"].([]any); !ok {
 		t.Fatalf("catalog = %v", result["structuredContent"])
+	}
+}
+
+func TestReservedSourceName(t *testing.T) {
+	s, _ := apiEnv(t)
+	for i, args := range []string{
+		`{"goal":"x","minutes":5,"source":" Screen-Time "}`,
+		`{"goal":"x","minutes":5,"source":"screen-time"}`,
+	} {
+		result := call(s, t, i+1, "start_focus_session", args)
+		if result["isError"] != true {
+			t.Fatalf("expected isError, got %v", result)
+		}
+		if text := result["content"].([]any)[0].(map[string]any)["text"].(string); text != reservedSource {
+			t.Fatalf("error text = %q", text)
+		}
+	}
+	result := call(s, t, 3, "end_focus_session", `{"source":"SCREEN-TIME"}`)
+	if result["isError"] != true {
+		t.Fatalf("expected isError, got %v", result)
+	}
+	if text := result["content"].([]any)[0].(map[string]any)["text"].(string); text != reservedSource {
+		t.Fatalf("error text = %q", text)
+	}
+}
+
+// A non-empty non-JSON body surfaces as an error, not an empty result.
+func TestUnreadableAnswer(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("not json"))
+	}))
+	t.Cleanup(api.Close)
+	file := filepath.Join(t.TempDir(), "connection.json")
+	info := fmt.Sprintf(`{"version":1,"url":%q,"token":"tok","pid":1234}`, api.URL)
+	if err := os.WriteFile(file, []byte(info), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := New("1.0.0")
+	s.ConnectionFile = file
+	result := call(s, t, 1, "get_focus_session", `{}`)
+	if result["isError"] != true {
+		t.Fatalf("expected isError, got %v", result)
+	}
+	if text := result["content"].([]any)[0].(map[string]any)["text"].(string); text != "the app sent an unreadable answer" {
+		t.Fatalf("error text = %q", text)
 	}
 }
 
