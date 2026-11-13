@@ -200,9 +200,46 @@ async function main() {
     assert.equal(cover.shown.kind, 'page');
     assert.equal(cover.shown.label, 'Google Chrome');
     // A different window resets the grace.
-    foreground.current = { pid: 10, exePath: 'C:\\chrome.exe', title: 'Other page - Google Chrome' };
+    foreground.current = { pid: 30, exePath: 'C:\\chrome.exe', title: 'Other page - Google Chrome' };
     await guard.check();
     assert.equal(cover.shown, null);
+  });
+
+  await scenario('the unknown-page grace follows the window, not the title', async () => {
+    const store = { settings: {}, focusSession: session({ sites: ['github.com'] }) };
+    const identified = () => ({ name: 'Google Chrome', browser: { id: 'chrome', name: 'Google Chrome', family: 'chromium' } });
+    const fg = (title) => ({ pid: 31, exePath: 'C:\\chrome.exe', title });
+    const foreground = { current: fg('Loading - Google Chrome') };
+    const { guard, cover } = makeGuard({ store, foreground, identified });
+    await guard.check();
+    // The title keeps changing while the clock advances — one window, one grace.
+    clock += UNKNOWN_PAGE_MS - 100;
+    foreground.current = fg('Still loading - Google Chrome');
+    await guard.check();
+    assert.equal(cover.shown, null);
+    clock += 200;
+    foreground.current = fg('Another title - Google Chrome');
+    await guard.check();
+    assert.equal(cover.shown && cover.shown.kind, 'page', 'the grace belongs to the window');
+    // An allowed page resets it; the same window earns a fresh one.
+    foreground.current = fg('github.com - Google Chrome');
+    await guard.check();
+    assert.equal(cover.shown, null);
+    foreground.current = fg('Unknown again - Google Chrome');
+    await guard.check();
+    assert.equal(cover.shown, null, 'a fresh grace starts after an allowed page');
+  });
+
+  await scenario('the most specific site in the title wins', async () => {
+    const store = { settings: {}, focusSession: session({ mode: 'block', sites: ['example.com'], allowSites: ['work.example.com'] }) };
+    const identified = () => ({ name: 'Google Chrome', browser: { id: 'chrome', name: 'Google Chrome', family: 'chromium' } });
+    const fg = (title) => ({ current: { pid: 32, exePath: 'C:\\chrome.exe', title } });
+    const fine = makeGuard({ store, foreground: fg('work.example.com - Google Chrome'), identified });
+    await fine.guard.check();
+    assert.equal(fine.cover.shown, null, 'the allowSites exception beats the parent block');
+    const blocked = makeGuard({ store, foreground: fg('example.com - Google Chrome'), identified });
+    await blocked.guard.check();
+    assert.equal(blocked.cover.shown && blocked.cover.shown.kind, 'site');
   });
 
   await scenario('a missing title is not a new tab and still gets covered', async () => {
@@ -297,6 +334,18 @@ async function main() {
     assert.equal(short.status, 400);
     const noSource = store.endFocus('');
     assert.equal(noSource.status, 400);
+  });
+
+  await scenario('an elapsed session cannot stomp a later lockdown write', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tally-focus-'));
+    const store = new Store(path.join(dir, 'tally-data.json')).load();
+    store.updateSettings({ focusLockdown: false });
+    const started = store.startFocus({ goal: 'Write', source: 'screen-time', durationSeconds: 60 });
+    assert.equal(started.ok, true);
+    clock += 120 * 1000; // the session lapses without anyone noticing
+    store.updateSettings({ focusLockdown: true });
+    assert.equal(store.focusSession, null);
+    assert.equal(store.settings.focusLockdown, true, 'the write, not the expired session, wins');
   });
 
   await scenario('an expired session in the file ends on open', async () => {

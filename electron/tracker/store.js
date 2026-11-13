@@ -101,6 +101,9 @@ class Store {
   }
 
   updateSettings(patch) {
+    // An elapsed session ends before the write, like Go's UpdateSettings, so
+    // its stored lockdown cannot stomp the incoming value when it is noticed.
+    expireFocus(this.data);
     const next = { ...this.settings, ...patch };
     next.sampleSeconds = [5, 10, 30].includes(Number(next.sampleSeconds)) ? Number(next.sampleSeconds) : 5;
     next.idleSeconds = [60, 120, 300, 600].includes(Number(next.idleSeconds)) ? Number(next.idleSeconds) : 120;

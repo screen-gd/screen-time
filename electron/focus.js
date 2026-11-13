@@ -130,7 +130,13 @@ class FocusGuard {
         }
         verdict = judge(rules, { app, browser: true, site: seen.site, guessed: seen.guessed, blank: seen.blank });
       }
-      if (verdict && verdict.kind === 'page' && !this.pageGraceExpired(foreground)) verdict = null;
+      if (verdict && verdict.kind === 'page') {
+        if (!this.pageGraceExpired(foreground)) verdict = null;
+      } else {
+        // A page judged allowed — or covered another way — ends any open
+        // grace; the next unknown page earns a fresh one.
+        this.unknownKey = null;
+      }
       if (verdict) this.block(verdict, rules, foreground);
       else this.clear();
     } finally {
@@ -138,13 +144,14 @@ class FocusGuard {
     }
   }
 
-  // Resolves the site a browser shows: the title first — a listed site it
-  // names wins outright — then the history lookup. A guessed answer is
-  // flagged so judge can let it cover, never open: it may name a site from
-  // another tab while the title shows a different one.
+  // Resolves the site a browser shows: the title first — the longest listed
+  // site it names wins outright, so an allowSites exception beats its parent
+  // block — then the history lookup. A guessed answer is flagged so judge can
+  // let it cover, never open: it may name a site from another tab while the
+  // title shows a different one.
   async readSite(foreground, identified, rules) {
     const title = cleanBrowserTitle(identified.browser, foreground.title);
-    let site = titleEntry(foreground.title, [...rules.sites, ...rules.allowSites]);
+    let site = titleEntry(foreground.title, [...rules.allowSites, ...rules.sites].sort((a, b) => b.length - a.length));
     let guessed = false;
     if (!site) {
       let found = null;
@@ -158,9 +165,10 @@ class FocusGuard {
   }
 
   // An unnamed page is covered only once the same window has stayed unknown
-  // for the grace period; a cover already showing it stays up.
+  // for the grace period, whatever its title says; a cover already showing it
+  // stays up.
   pageGraceExpired(foreground) {
-    const key = `${foreground.pid}|${foreground.title}`;
+    const key = foreground.pid;
     if (this.blocking && this.blocking.key === key) return true;
     if (this.unknownKey === key) return Date.now() - this.unknownSince >= UNKNOWN_PAGE_MS;
     this.unknownKey = key;
@@ -178,7 +186,7 @@ class FocusGuard {
       goal: rules.session ? rules.session.goal : null,
       endsAt: rules.session ? rules.session.endsAt : null,
     };
-    this.blocking = { key: `${foreground.pid}|${foreground.title}`, target };
+    this.blocking = { key: foreground.pid, target };
     this.cover.show(target);
   }
 
