@@ -48,8 +48,10 @@ aumid. Site entries are bare hostnames; a listed site covers its subdomains.
 The literal `localhost` is also accepted. Ports are dropped, so it covers
 every local port. It is recognized from browser history, not the window title.
 A localhost page with no history, such as one in a private window, counts as an
-unnamed page: in allow mode it is covered after the unknown-page grace, and in
-block mode it stays open, because block mode only covers pages it can name.
+unnamed page: in allow mode it is covered after the unknown-page grace. In block
+mode it stays open, because block mode only covers pages it can name, unless the
+browser itself is on the app block list. Then the browser is covered right away
+when `allowSites` is empty, or after the grace when it is not.
 
 `PATCH /api/v1/settings` (or the UI) can still flip `focusLockdown` during a
 session, but the change is undone when the session ends.
@@ -134,6 +136,11 @@ the binary path:
 
 In a packaged install the binary is in the install folder under
 `resources\app.asar.unpacked\backend\` (`tally-backend.exe` on Windows).
+The Linux AppImage is the exception: it runs from a temporary mount that
+disappears when screen-time quits, so the path shown on the Focus page only
+works while the app runs. Copy `tally-backend` out of that folder once (for
+example to `~/.local/bin/`) and point the MCP config there. The binary needs
+nothing else; it finds the running app through the connection file.
 
 When screen-time is not running, tool calls answer "screen-time is not
 running. Open it and try again."
@@ -148,6 +155,11 @@ Tools:
 | `get_focus_session` | the running session or null |
 | `start_focus_session` | `{ goal, minutes, mode?, apps?, sites?, allowSites?, source? }`: starts a session (minutes 1 to 720) |
 | `end_focus_session` | `{ source? }`: ends the session belonging to the source |
+
+Both session tools use the source `agent` when `source` is omitted. Agents that
+share a source share sessions: one can replace or end the other's session
+without a `409`. Give each agent its own source name. The tools reject
+`screen-time`, which is reserved for the desktop app.
 
 A session started by an agent blocks other sources with a `409` until it ends;
 it can always be ended from the screen-time window.

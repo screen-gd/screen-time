@@ -58,6 +58,7 @@ class FocusGuard {
     this.timer = null;
     this.trackTimer = null;
     this.tracked = null;
+    this.slowReader = false;
     this.busy = false;
     this.blocking = null;
     this.unknownKey = null;
@@ -107,7 +108,11 @@ class FocusGuard {
         this.clear();
         return;
       }
+      const readStarted = Date.now();
       const foreground = this.readWindow();
+      // A read slower than the tracker's tick keeps fast tracking off; a later
+      // fast read turns it back on.
+      this.slowReader = Date.now() - readStarted > this.trackInterval;
       if (!foreground || foreground.error) return;
       // screen-time's own window in front: lift the cover so it can be used. A click
       // on the cover itself also lands here, and must not dismiss it.
@@ -227,6 +232,7 @@ class FocusGuard {
   // cover itself taking focus is ignored.
   track(foreground) {
     this.stopTracking();
+    if (this.slowReader) return;
     this.tracked = { pid: foreground.pid, title: foreground.title };
     this.trackTimer = setInterval(() => this.trackTick(), this.trackInterval);
     if (this.trackTimer.unref) this.trackTimer.unref();
@@ -237,8 +243,9 @@ class FocusGuard {
     const foreground = this.readWindow();
     // A reader that blocks longer than the tick (a hung macOS app answering
     // Accessibility slowly) would starve the main thread at this rate; stop
-    // tracking until the next one-second check places the cover again.
+    // tracking until a one-second check sees a fast read again.
     if (Date.now() - startedAt > this.trackInterval) {
+      this.slowReader = true;
       this.stopTracking();
       return null;
     }

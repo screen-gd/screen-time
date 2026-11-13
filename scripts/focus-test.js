@@ -439,6 +439,12 @@ async function main() {
     guard.trackTick();
     assert.equal(guard.trackTimer, null, 'a read slower than the tick stops tracking');
     assert.equal(cover.shown.kind, 'app', 'the cover stays up for the next check');
+    await guard.check();
+    assert.equal(guard.trackTimer, null, 'a check with a slow read does not restart fast tracking');
+    assert.equal(cover.shown.kind, 'app', 'the one-second check still covers');
+    slow = false;
+    await guard.check();
+    assert.ok(guard.trackTimer, 'a fast read turns fast tracking back on');
     guard.stop();
   });
 

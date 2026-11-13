@@ -110,6 +110,8 @@ function focusedWindow() {
   } finally {
     api.CFRelease(el);
   }
+  // The timeout is per element: the window needs its own for title and geometry reads.
+  if (win) api.AXUIElementSetMessagingTimeout(win, 0.25);
   return win;
 }
 
