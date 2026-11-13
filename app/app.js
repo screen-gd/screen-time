@@ -27,6 +27,8 @@
     focusError: null,
     focusConflict: null,
     focusCatalog: null,
+    focusStarting: false,
+    focusPending: {},
     allowSitesDraft: [],
   };
 
@@ -818,9 +820,20 @@
   }
 
   // One editable list (apps or sites): add field, rows with Remove, suggestion
-  // chips. Every change goes straight to the given save callback.
-  function focusEditor({ key, title, isApp, items, placeholder, onSave, suggestions, hint }) {
+  // chips. `current` reads the list's latest value at click time; a change goes
+  // to onSave and a second change while that save is pending is ignored.
+  function focusEditor({ key, title, isApp, items, current, placeholder, onSave, suggestions, hint }) {
     const labelOf = (item) => (isApp ? appLabel(item) : item);
+    const list = current || (() => items);
+    const save = async (next) => {
+      if (state.focusPending[key]) return;
+      state.focusPending[key] = true;
+      try {
+        await onSave(next);
+      } finally {
+        state.focusPending[key] = false;
+      }
+    };
     const add = async (raw) => {
       const value = isApp ? normalizeApp(raw) : normalizeSite(raw);
       if (!value) {
@@ -830,7 +843,8 @@
       }
       state.focusErrors[key] = null;
       state.focusDrafts[key] = '';
-      if (!items.includes(value)) await onSave([...items, value]);
+      const items = list();
+      if (!items.includes(value)) await save([...items, value]);
       else render();
       const input = document.getElementById(`focus-${key}-input`);
       if (input) input.focus();
@@ -860,7 +874,7 @@
             class: 'link-btn',
             type: 'button',
             'aria-label': `Remove ${labelOf(item)}`,
-            onclick: () => onSave(items.filter((entry) => entry !== item)),
+            onclick: () => save(list().filter((entry) => entry !== item)),
           }, 'Remove'))))
         : h('p', { class: 'note', text: 'Nothing listed yet.' }),
       suggestions.length
@@ -891,7 +905,10 @@
     return { apps, sites };
   }
 
+  // Starts the session the form describes. focusStarting blocks a second
+  // submit while the first call is in flight.
   async function startSession() {
+    if (state.focusStarting) return;
     const settings = state.snapshot.settings;
     const goal = String(state.focusGoal || '').trim();
     if (!goal) {
@@ -901,46 +918,60 @@
     }
     state.focusError = null;
     state.focusConflict = null;
-    const minutes = FOCUS_LENGTHS.some(([value]) => value === Number(settings.focusMinutes)) ? Number(settings.focusMinutes) : 50;
-    // Omitted app/site lists fall back to the saved lists for the mode.
-    let result;
-    try {
-      result = await api.startFocus({
-        goal,
-        durationSeconds: minutes * 60,
-        mode: settings.focusMode === 'block' ? 'block' : 'allow',
-        allowSites: state.allowSitesDraft.length ? state.allowSitesDraft : undefined,
-      });
-    } catch {
-      state.focusError = 'Could not reach screen-time’s backend. Try again.';
-      render();
-      return;
-    }
-    if (result && result.ok) {
-      state.focusGoal = '';
-      state.allowSitesDraft = [];
-      await refresh();
-      return;
-    }
-    if (result && result.status === 409) {
-      state.focusConflict = result.session;
-      render();
-      return;
-    }
-    state.focusError = (result && result.error) || 'Could not start the session.';
+    state.focusStarting = true;
     render();
+    try {
+      const minutes = FOCUS_LENGTHS.some(([value]) => value === Number(settings.focusMinutes)) ? Number(settings.focusMinutes) : 50;
+      // Omitted app/site lists fall back to the saved lists for the mode.
+      let result;
+      try {
+        result = await api.startFocus({
+          goal,
+          durationSeconds: minutes * 60,
+          mode: settings.focusMode === 'block' ? 'block' : 'allow',
+          allowSites: state.allowSitesDraft.length ? state.allowSitesDraft : undefined,
+        });
+      } catch {
+        state.focusError = 'Could not reach screen-time’s backend. Try again.';
+        return;
+      }
+      if (result && result.ok) {
+        state.focusGoal = '';
+        state.allowSitesDraft = [];
+        await refresh();
+        return;
+      }
+      if (result && result.status === 409) {
+        state.focusConflict = result.session;
+        return;
+      }
+      state.focusError = (result && result.error) || 'Could not start the session.';
+    } finally {
+      state.focusStarting = false;
+      render();
+    }
   }
 
+  // Ends the running session and reports whether it did; a failed end keeps
+  // the running view and says why.
   async function endSession() {
+    let result;
     try {
-      await api.endFocus();
+      result = await api.endFocus();
     } catch {
       state.focusError = 'Could not reach screen-time’s backend. Try again.';
       render();
-      return;
+      return false;
     }
+    if (!result || !result.ok) {
+      state.focusError = (result && result.error) || 'Could not end the session. Try again.';
+      render();
+      return false;
+    }
+    state.focusError = null;
     state.focusConflict = null;
     await refresh();
+    return true;
   }
 
   function copyText(text) {
@@ -983,7 +1014,8 @@
       chipGroup('Websites', session.sites, false),
       chipGroup('Always open', session.allowSites, false),
       h('div', { class: 'focus-actions' },
-        h('button', { class: 'btn', type: 'button', onclick: endSession }, 'End session')));
+        h('button', { class: 'btn', type: 'button', onclick: endSession }, 'End session')),
+      state.focusError ? h('p', { class: 'field-error', role: 'alert', text: state.focusError }) : null);
   }
 
   function focusSetup(snap) {
@@ -1025,7 +1057,7 @@
           'aria-pressed': String(minutes === value),
           onclick: () => saveSettings({ focusMinutes: value }),
         }, label))),
-      h('button', { class: 'btn', type: 'submit' }, 'Start')),
+      h('button', { class: 'btn', type: 'submit', disabled: state.focusStarting || null }, 'Start')),
       state.focusError ? h('p', { class: 'field-error', role: 'alert', text: state.focusError }) : null,
       // A session from an agent blocks a start; ending it is offered inline.
       state.focusConflict ? h('p', { class: 'field-error', role: 'alert' },
@@ -1034,15 +1066,7 @@
           class: 'link-btn',
           type: 'button',
           onclick: async () => {
-            try {
-              await api.endFocus();
-            } catch {
-              state.focusError = 'Could not reach screen-time’s backend. Try again.';
-              render();
-              return;
-            }
-            state.focusConflict = null;
-            await startSession();
+            if (await endSession()) await startSession();
           },
         }, 'End it')) : null);
 
@@ -1051,12 +1075,14 @@
         plural(apps.length + sites.length, 'entry', 'entries')),
       focusEditor({
         key: 'apps', title: 'Apps', isApp: true, items: apps,
+        current: () => state.snapshot.settings[appsKey] || [],
         placeholder: 'code.exe or Visual Studio Code',
         onSave: (list) => saveSettings({ [appsKey]: list }),
         suggestions: suggestions.apps,
       }),
       focusEditor({
         key: 'sites', title: 'Websites', isApp: false, items: sites,
+        current: () => state.snapshot.settings[sitesKey] || [],
         placeholder: 'reddit.com',
         onSave: (list) => saveSettings({ [sitesKey]: list }),
         suggestions: suggestions.sites,
@@ -1065,6 +1091,7 @@
       focusEditor({
         key: 'open', title: 'Always open during the session', isApp: false,
         items: state.allowSitesDraft,
+        current: () => state.allowSitesDraft,
         placeholder: 'music.youtube.com',
         onSave: async (list) => { state.allowSitesDraft = list; render(); },
         suggestions: suggestions.sites.filter((site) => !state.allowSitesDraft.includes(site)).slice(0, 4),
