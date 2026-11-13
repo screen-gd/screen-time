@@ -28,12 +28,31 @@ async function request(baseUrl, pathname, options = {}, token = '') {
   }
 }
 
+// Same as request, but 4xx answers come back instead of throwing: focus
+// session conflicts and validation errors carry a body the caller needs.
+async function requestStatus(baseUrl, pathname, options = {}, token = '') {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeout || REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${cleanBaseUrl(baseUrl)}${pathname}`, {
+      ...options,
+      signal: controller.signal,
+      headers: { 'content-type': 'application/json', 'x-tally-token': token, ...(options.headers || {}) },
+    });
+    const body = await response.json().catch(() => ({}));
+    return { status: response.status, body };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 class BackendStore {
   constructor({ baseUrl, token, file }) {
     this.baseUrl = cleanBaseUrl(baseUrl);
     this.token = token || '';
     this.file = file;
     this.settings = null;
+    this.focusSession = null;
     this.data = { createdAt: null, days: {} };
     this.pendingRecords = Promise.resolve();
   }
@@ -48,6 +67,7 @@ class BackendStore {
   async snapshot() {
     const snapshot = await request(this.baseUrl, '/api/v1/snapshot', {}, this.token);
     this.settings = snapshot.settings;
+    this.focusSession = (snapshot.focus && snapshot.focus.session) || null;
     return snapshot;
   }
 
@@ -68,6 +88,43 @@ class BackendStore {
     const result = await request(this.baseUrl, '/api/v1/settings', {}, this.token);
     this.settings = result.settings;
     return this.settings;
+  }
+
+  // The current session; reading it makes the backend end an expired one.
+  async refreshFocus() {
+    const result = await request(this.baseUrl, '/api/v1/focus/session', {}, this.token);
+    this.focusSession = result.session || null;
+    return this.focusSession;
+  }
+
+  // { ok:true, session } | { ok:false, status:409, session } | { ok:false, status:400, error }
+  async startFocus(input) {
+    const { status, body } = await requestStatus(this.baseUrl, '/api/v1/focus/session', {
+      method: 'POST', body: JSON.stringify(input || {}),
+    }, this.token);
+    if (status === 201) {
+      this.focusSession = body.session || null;
+      return { ok: true, session: body.session };
+    }
+    if (status === 409) return { ok: false, status, session: body.session || null };
+    return { ok: false, status: 400, error: (body && body.error) || `backend ${status}` };
+  }
+
+  // The last `days` of usage merged into app/site suggestion rows.
+  async catalog(days = 30) {
+    return request(this.baseUrl, `/api/v1/focus/catalog?days=${encodeURIComponent(days)}`, {}, this.token);
+  }
+
+  async endFocus(source) {
+    const { status, body } = await requestStatus(this.baseUrl, `/api/v1/focus/session?source=${encodeURIComponent(source)}`, {
+      method: 'DELETE',
+    }, this.token);
+    if (status === 200) {
+      this.focusSession = null;
+      return { ok: true, session: null };
+    }
+    if (status === 409) return { ok: false, status, session: body.session || null };
+    return { ok: false, status: 400, error: (body && body.error) || `backend ${status}` };
   }
 
   record(sample) {
@@ -109,6 +166,12 @@ function executableCandidates(root) {
     path.join(resources, 'backend', name),
     path.join(resources, 'app.asar.unpacked', 'backend', name),
   ];
+}
+
+// The first backend binary that exists, or null: also the path the UI shows in
+// the "Connect an agent" snippet.
+function backendBinary(root) {
+  return executableCandidates(root).find((candidate) => fs.existsSync(candidate)) || null;
 }
 
 function startBackend({ root, dataFile, frontendDir }) {
@@ -167,4 +230,4 @@ function stopBackend(child, timeoutMs = 3000) {
   });
 }
 
-module.exports = { BackendStore, request, startBackend, stopBackend };
+module.exports = { BackendStore, request, startBackend, stopBackend, backendBinary };

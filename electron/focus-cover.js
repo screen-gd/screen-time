@@ -9,7 +9,7 @@ class FocusCover {
   constructor({ root }) {
     this.root = root;
     this.windows = new Map(); // display id -> BrowserWindow
-    this.site = null;
+    this.target = null;
   }
 
   create(display) {
@@ -44,11 +44,18 @@ class FocusCover {
       event.preventDefault();
       win.hide();
     });
-    win.shownSite = null;
+    win.shownKey = null;
     return win;
   }
 
-  show(site) {
+  // The verdict decides the cover's copy: { kind, label, mode, goal, endsAt }.
+  // Only a change reloads the page; the remaining time ticks on the page itself.
+  show(target) {
+    const key = JSON.stringify(target);
+    const query = {};
+    for (const name of ['kind', 'label', 'mode', 'goal', 'endsAt']) {
+      if (target[name] !== null && target[name] !== undefined) query[name] = String(target[name]);
+    }
     const displays = screen.getAllDisplays();
     for (const [id, win] of this.windows) {
       if (win.isDestroyed() || !displays.some((display) => display.id === id)) {
@@ -63,19 +70,19 @@ class FocusCover {
         this.windows.set(display.id, win);
       }
       win.setBounds(display.bounds);
-      if (win.shownSite !== site) {
-        win.shownSite = site;
-        win.loadFile(path.join(this.root, 'app', 'focus.html'), { query: { site } });
+      if (win.shownKey !== key) {
+        win.shownKey = key;
+        win.loadFile(path.join(this.root, 'app', 'focus.html'), { query });
       }
       // Inactive, so keys still reach the browser underneath: Ctrl+W closes the tab.
       if (!win.isVisible()) win.showInactive();
       win.moveTop();
     }
-    this.site = site;
+    this.target = target;
   }
 
   hide() {
-    this.site = null;
+    this.target = null;
     for (const win of this.windows.values()) {
       if (!win.isDestroyed() && win.isVisible()) win.hide();
     }

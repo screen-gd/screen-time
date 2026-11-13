@@ -37,6 +37,33 @@ function blockedEntry(domain, list) {
   return list.find((entry) => host === entry || host.endsWith(`.${entry}`)) || null;
 }
 
+// App list entries are normalized names or paths: "C:\Tools\Resolve.exe" and
+// "Visual Studio Code" -> "resolve" and "visual studio code". The Go backend
+// (backend/internal/store/blocklist.go) does the same.
+function normalizeApp(value) {
+  const text = String(value || '').trim().toLowerCase()
+    .split(/[\\/]/).pop()
+    .replace(/\.(exe|app)$/, '')
+    .replace(/\s+/g, ' ');
+  return text.length >= 1 && text.length <= 128 ? text : null;
+}
+
+function normalizeAppList(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const item of list) {
+    const app = normalizeApp(item);
+    if (app && !out.includes(app)) out.push(app);
+    if (out.length >= LIST_LIMIT) break;
+  }
+  return out;
+}
+
+// The id a recorded or foreground app path counts as.
+function appIdOf(exePath) {
+  return normalizeApp(exePath);
+}
+
 // Some pages and browsers put the address in the window title; that catches a
 // site even when history has no match for it, as in a private window.
 function titleEntry(title, list) {
@@ -49,4 +76,4 @@ function titleEntry(title, list) {
   }) || null;
 }
 
-module.exports = { normalizeSite, normalizeSiteList, blockedEntry, titleEntry, LIST_LIMIT };
+module.exports = { normalizeSite, normalizeSiteList, normalizeApp, normalizeAppList, appIdOf, blockedEntry, titleEntry, LIST_LIMIT };

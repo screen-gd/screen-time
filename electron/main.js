@@ -9,9 +9,10 @@ const { Store } = require('./tracker/store');
 const { Tracker } = require('./tracker');
 const browsers = require('./tracker/browsers');
 const { Updater } = require('./updater');
-const { BackendStore, startBackend, stopBackend } = require('./backend-client');
+const { BackendStore, startBackend, stopBackend, backendBinary } = require('./backend-client');
 const { FocusGuard } = require('./focus');
 const { FocusCover } = require('./focus-cover');
+const { connectionPath, writeConnection, removeConnection } = require('./connection-file');
 
 const ROOT = path.join(__dirname, '..');
 const DEMO = process.env.TALLY_DEMO === '1' || process.argv.includes('--demo');
@@ -41,6 +42,8 @@ let trackingHeartbeat = null;
 let focusCover = null;
 let focusGuard = null;
 let settingsPoll = null;
+let connectionFile = null;
+let lastFocusId;
 const SETTINGS_POLL_MS = 3000;
 
 function send(channel, payload) {
@@ -79,6 +82,12 @@ function demoNow() {
   return date;
 }
 
+// How an agent reaches the backend: the MCP server binary and the file that
+// names the running instance.
+function agentInfo() {
+  return { command: backendBinary(ROOT), args: ['mcp'], connectionFile: connectionPath() };
+}
+
 function localSnapshot() {
   const now = DEMO ? demoNow() : new Date();
   const today = store.aggregate(1);
@@ -98,6 +107,7 @@ function localSnapshot() {
     yesterday,
     ranges: { 1: today, 7: week, 30: month },
     settings: store.settings,
+    focus: { session: store.focusSession },
     tracking: {
       ...tracker.getStatus(),
       paused: store.settings.paused,
@@ -117,6 +127,7 @@ function localSnapshot() {
       storedDays: storedKeys.length,
       oldestDay: storedKeys[0] || null,
       fileSize,
+      agent: agentInfo(),
     },
   };
 }
@@ -148,8 +159,29 @@ async function snapshot() {
     supported: tracker.status.supported,
     permissions: { accessibility: tracker.status.accessibility },
     update: updater ? updater.getState() : result.system.update,
+    agent: agentInfo(),
   };
   return result;
+}
+
+// Applies the visible side of a session start, end or expiry wherever it came
+// from: the guard re-reads the rules, and a real change refreshes the UI.
+async function focusChanged() {
+  let session = null;
+  if (remoteBackend) {
+    try { session = await store.refreshFocus(); } catch { session = store.focusSession; }
+  } else {
+    session = store.focusSession;
+  }
+  const id = session ? session.id : null;
+  const changed = id !== lastFocusId;
+  lastFocusId = id;
+  if (focusGuard) focusGuard.sync();
+  if (changed) {
+    send('tally:changed', { at: Date.now() });
+    if (rebuildTrayMenu) rebuildTrayMenu();
+  }
+  return changed;
 }
 
 function createWindow(route = null) {
@@ -234,6 +266,7 @@ function createTray() {
       console.error('[tally] tray preview unavailable:', error.message);
     }
     const paused = store.settings.paused;
+    const session = store.focusSession || null;
     const status = tracker.getStatus();
     const duration = (seconds) => {
       const minutes = Math.floor(seconds / 60);
@@ -257,19 +290,31 @@ function createTray() {
           send('tally:changed', { at: Date.now() });
         },
       },
-      {
-        label: store.settings.focusLockdown ? 'Turn off Focus lockdown' : 'Turn on Focus lockdown',
+      // A running session owns the screen rules; the between-sessions switch
+      // hides until it ends.
+      ...(session ? [
+        { label: `Focus: ${label(session.goal)}`, enabled: false },
+        { label: `${Math.max(1, Math.ceil((Date.parse(session.endsAt) - Date.now()) / 60000))} min left`, enabled: false },
+        {
+          label: 'End focus session',
+          click: async () => {
+            await store.endFocus('screen-time');
+            await focusChanged();
+          },
+        },
+      ] : [{
+        label: store.settings.focusLockdown ? 'Turn off block list' : 'Turn on block list',
         // Turning it on with nothing to block would do nothing; the window is where the list is edited.
         click: async () => {
-          const hasSites = Array.isArray(store.settings.blockedSites) && store.settings.blockedSites.length > 0;
-          if (!store.settings.focusLockdown && !hasSites) {
+          const hasList = (store.settings.blockedSites || []).length + (store.settings.focusBlockApps || []).length > 0;
+          if (!store.settings.focusLockdown && !hasList) {
             showWindow('focus');
             return;
           }
           await applySettings({ focusLockdown: !store.settings.focusLockdown });
           send('tally:changed', { at: Date.now() });
         },
-      },
+      }]),
       ...(updater && updater.state.status === 'ready'
         ? [{ type: 'separator' }, { label: `Restart to update to ${updater.state.version}`, click: () => updater.install() }]
         : []),
@@ -378,6 +423,22 @@ function registerIpc() {
     showWindow('focus');
     return true;
   });
+  ipcMain.handle('tally:focus:start', async (event, input) => {
+    if (focusCover && focusCover.owns(event.sender)) return null;
+    const result = await store.startFocus({ ...(input && typeof input === 'object' ? input : {}), source: 'screen-time' });
+    await focusChanged();
+    return result;
+  });
+  ipcMain.handle('tally:focus:end', async (event) => {
+    if (focusCover && focusCover.owns(event.sender)) return null;
+    const result = await store.endFocus('screen-time');
+    await focusChanged();
+    return result;
+  });
+  ipcMain.handle('tally:focus:catalog', async (event, days) => {
+    if (focusCover && focusCover.owns(event.sender)) return null;
+    return store.catalog([1, 7, 30].includes(Number(days)) ? Number(days) : 30);
+  });
   ipcMain.handle('tally:clear', async () => {
     await store.clear();
     store.flush();
@@ -423,6 +484,16 @@ if (!app.requestSingleInstanceLock()) {
         store = await new BackendStore({ baseUrl: backendRuntime.baseUrl, token: backendRuntime.token, file: dataFile }).connect();
         remoteBackend = true;
         console.log('[tally] using Go backend at', backendRuntime.baseUrl);
+        // Local tools (the MCP server) find the running backend through this file.
+        if (!SCREENSHOT) {
+          try {
+            connectionFile = connectionPath();
+            writeConnection(connectionFile, { version: 1, url: backendRuntime.baseUrl, token: backendRuntime.token, pid: process.pid });
+          } catch (error) {
+            console.error('[tally] could not write connection file:', error.message);
+            connectionFile = null;
+          }
+        }
       } catch (error) {
         console.error('[tally] Go backend unavailable, using local store:', error.message);
         stopBackend(backendRuntime && backendRuntime.process);
@@ -487,14 +558,18 @@ if (!app.requestSingleInstanceLock()) {
       focusCover = new FocusCover({ root: ROOT });
       focusGuard = new FocusGuard({ store, cover: focusCover });
       focusGuard.sync();
-      // The browser UI changes settings on the backend directly; poll so the desktop follows it.
-      if (remoteBackend) {
-        settingsPoll = setInterval(async () => {
+      // The browser UI changes settings and sessions on the backend directly;
+      // poll so the desktop follows it. Local sessions still need the poll for
+      // expiry, which focusChanged picks up from the store getter.
+      settingsPoll = setInterval(async () => {
+        if (remoteBackend) {
           try { await store.refreshSettings(); } catch { return; }
           settingsChanged(store.settings);
-        }, SETTINGS_POLL_MS);
-        if (settingsPoll.unref) settingsPoll.unref();
-      }
+        }
+        await focusChanged();
+      }, SETTINGS_POLL_MS);
+      if (settingsPoll.unref) settingsPoll.unref();
+      lastFocusId = store.focusSession ? store.focusSession.id : null;
     }
 
     applyLoginItem(store.settings);
@@ -503,6 +578,14 @@ if (!app.requestSingleInstanceLock()) {
     createTray();
 
     app.on('activate', showWindow);
+  });
+
+  // A crash skips before-quit; the connection file is still removed if the
+  // process exits normally after writing it.
+  process.on('exit', () => {
+    if (connectionFile) {
+      try { removeConnection(connectionFile, process.pid); } catch { /* leaving anyway */ }
+    }
   });
 
   app.on('window-all-closed', () => {
@@ -518,6 +601,10 @@ if (!app.requestSingleInstanceLock()) {
     if (settingsPoll) clearInterval(settingsPoll);
     if (focusGuard) focusGuard.stop();
     if (focusCover) focusCover.destroy();
+    if (connectionFile) {
+      removeConnection(connectionFile, process.pid);
+      connectionFile = null;
+    }
     if (store) store.flush();
     const child = backendRuntime && backendRuntime.process;
     if (!child) return;
