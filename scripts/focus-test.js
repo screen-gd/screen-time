@@ -404,6 +404,44 @@ async function main() {
     assert.equal(cover.shown, null, 'the allowed window is not covered');
   });
 
+  await scenario('a verdict from a lookup never lands on the window that replaced it', async () => {
+    const browser = { id: 'chrome', name: 'Google Chrome', family: 'chromium' };
+    const store = { settings: {}, focusSession: session({ sites: ['github.com'] }) };
+    const foreground = { current: { pid: 70, exePath: 'C:\\chrome.exe', title: 'Some page - Google Chrome' } };
+    // While history is read, the user switches to an allowed app.
+    const found = () => {
+      foreground.current = { pid: 71, exePath: 'C:\\Tools\\code.exe', title: 'repo' };
+      return { domain: 'reddit.com', match: 100, guessed: false, visitedAt: clock };
+    };
+    const { guard, cover } = makeGuard({ store, foreground, found, identified: (fg) => ({ name: 'Google Chrome', browser: fg.pid === 70 ? browser : null }) });
+    await guard.check();
+    assert.equal(cover.shows, 0, 'the old browser verdict was dropped');
+  });
+
+  await scenario('a slow window read stops the fast tracker', async () => {
+    const store = { settings: {}, focusSession: session() };
+    const win = { pid: 80, exePath: 'C:\\Notion\\Notion.exe', title: 'Notes', bounds: { x: 0, y: 0, width: 400, height: 300 } };
+    const cover = { shown: null, show(target) { this.shown = target; }, move() {}, hide() { this.shown = null; } };
+    let slow = false;
+    const guard = new FocusGuard({
+      store,
+      cover,
+      readWindow: () => { if (slow) clock += 500; return win; },
+      identifyApp: () => ({ name: 'Notion', browser: null }),
+      placeCover: (fg) => ({ rect: fg.bounds, fallback: false }),
+      trackInterval: 150,
+      selfPid: 1,
+      platform: 'win32',
+    });
+    await guard.check();
+    assert.ok(guard.trackTimer, 'tracking while covered');
+    slow = true;
+    guard.trackTick();
+    assert.equal(guard.trackTimer, null, 'a read slower than the tick stops tracking');
+    assert.equal(cover.shown.kind, 'app', 'the cover stays up for the next check');
+    guard.stop();
+  });
+
   await scenario('the local store keeps a session and restores the lockdown', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tally-focus-'));
     const file = path.join(dir, 'tally-data.json');

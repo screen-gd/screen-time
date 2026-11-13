@@ -139,6 +139,10 @@ class FocusGuard {
           this.clear();
           return;
         }
+        // The window in front may have changed during the lookup too; a verdict
+        // for the old one must not cover the new one. The next check judges it.
+        const now = this.readWindow();
+        if (!now || now.pid !== foreground.pid || now.title !== foreground.title) return;
         verdict = judge(rules, { app, browser: true, site: seen.site, guessed: seen.guessed, blank: seen.blank });
       }
       if (verdict && verdict.kind === 'page') {
@@ -229,7 +233,15 @@ class FocusGuard {
   }
 
   trackTick() {
+    const startedAt = Date.now();
     const foreground = this.readWindow();
+    // A reader that blocks longer than the tick (a hung macOS app answering
+    // Accessibility slowly) would starve the main thread at this rate; stop
+    // tracking until the next one-second check places the cover again.
+    if (Date.now() - startedAt > this.trackInterval) {
+      this.stopTracking();
+      return null;
+    }
     if (!foreground || foreground.error) return null;
     if (foreground.pid === this.selfPid) return null;
     if (this.tracked && foreground.pid === this.tracked.pid && foreground.title === this.tracked.title) {

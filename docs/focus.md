@@ -46,9 +46,10 @@ App list entries are normalized ids: lowercased basename minus `.exe`/`.app`
 code`). An entry matches the exe id, the display name, the bundle id or the
 aumid. Site entries are bare hostnames; a listed site covers its subdomains.
 The literal `localhost` is also accepted. Ports are dropped, so it covers
-every local port. It is recognized from browser history, not the window title,
-so a localhost page in a private window is covered after the unknown-page grace
-like any unnamed page.
+every local port. It is recognized from browser history, not the window title.
+A localhost page with no history, such as one in a private window, counts as an
+unnamed page: in allow mode it is covered after the unknown-page grace, and in
+block mode it stays open, because block mode only covers pages it can name.
 
 `PATCH /api/v1/settings` (or the UI) can still flip `focusLockdown` during a
 session, but the change is undone when the session ends.
