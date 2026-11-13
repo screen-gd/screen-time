@@ -1,7 +1,7 @@
 {
   "name": "screen-time",
   "productName": "screen-time",
-  "version": "1.2.2",
+  "version": "1.3.0",
   "description": "Local screen-time tracker: which app and which website took your day.",
   "author": "Screen",
   "main": "electron/main.js",
@@ -17,7 +17,7 @@
     "icons": "node scripts/fetch-icons.js",
     "dither": "node scripts/make-dither.js",
     "check": "node scripts/koffi-test.js",
-    "test": "node scripts/tracker-test.js",
+    "test": "node scripts/tracker-test.js && node scripts/focus-test.js",
     "dist": "node scripts/build-native.js && bun run backend:build && electron-builder --win nsis --publish never",
     "dist:dir": "node scripts/build-native.js && bun run backend:build && electron-builder --dir",
     "dist:mac": "node scripts/build-native.js && bun run backend:build && electron-builder --mac --publish never",
