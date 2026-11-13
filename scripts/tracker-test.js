@@ -9,7 +9,7 @@
 const assert = require('node:assert/strict');
 const { Tracker } = require('../electron/tracker');
 const { identify } = require('../electron/tracker/apps');
-const { rootsFor } = require('../electron/tracker/browsers');
+const { rootsFor, domainOf } = require('../electron/tracker/browsers');
 const { normalizeSite, normalizeSiteList, blockedEntry, titleEntry } = require('../electron/blocklist');
 const { FocusGuard } = require('../electron/focus');
 const { Store } = require('../electron/tracker/store');
@@ -305,8 +305,11 @@ async function main() {
     assert.equal(normalizeSite('https://www.Reddit.com/r/all?x=1'), 'reddit.com');
     assert.equal(normalizeSite('*.youtube.com'), 'youtube.com');
     assert.equal(normalizeSite('user@x.com:8080'), 'x.com');
-    assert.equal(normalizeSite('localhost'), null);
+    assert.equal(normalizeSite('localhost'), 'localhost');
+    assert.equal(normalizeSite('http://localhost:3000/learn'), 'localhost');
+    assert.equal(normalizeSite('intranet'), null);
     assert.equal(normalizeSite('not a site'), null);
+    assert.equal(domainOf('http://localhost:3000/learn'), 'localhost');
     assert.deepEqual(normalizeSiteList(['reddit.com', 'REDDIT.com', 42, '', 'news.ycombinator.com']), ['reddit.com', 'news.ycombinator.com']);
     assert.deepEqual(normalizeSiteList(null), []);
   });

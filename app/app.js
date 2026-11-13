@@ -759,7 +759,7 @@
       .replace(/^\*\./, '')
       .replace(/^www\./, '')
       .replace(/\.$/, '');
-    return SITE_HOST.test(text) ? text : null;
+    return text === 'localhost' || SITE_HOST.test(text) ? text : null;
   }
 
   // Same rules as electron/blocklist.js normalizeApp.

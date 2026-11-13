@@ -6,7 +6,9 @@
 const LIST_LIMIT = 200;
 const HOST = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
 
-// Accepts what people paste: "https://www.reddit.com/r/all", "*.reddit.com", "Reddit.com".
+// Accepts what people paste: "https://www.reddit.com/r/all", "*.reddit.com",
+// "Reddit.com", "localhost:3000". Entries are dotted hostnames, except the
+// literal localhost, allowed for local dev pages.
 function normalizeSite(value) {
   const text = String(value || '').trim().toLowerCase()
     .replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
@@ -16,7 +18,7 @@ function normalizeSite(value) {
     .replace(/^\*\./, '')
     .replace(/^www\./, '')
     .replace(/\.$/, '');
-  return HOST.test(text) ? text : null;
+  return text === 'localhost' || HOST.test(text) ? text : null;
 }
 
 function normalizeSiteList(list) {

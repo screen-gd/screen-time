@@ -51,7 +51,7 @@ func TestBlockedSitesAreNormalized(t *testing.T) {
 	got := s.UpdateSettings(map[string]any{"focusLockdown": true, "blockedSites": []any{
 		"https://www.Reddit.com/r/all", "*.youtube.com", "reddit.com", "not a site", "localhost", 42, "user@x.com:8080",
 	}})
-	want := []string{"reddit.com", "youtube.com", "x.com"}
+	want := []string{"reddit.com", "youtube.com", "localhost", "x.com"}
 	if !got.FocusLockdown || len(got.BlockedSites) != len(want) {
 		t.Fatalf("unexpected settings: %+v", got)
 	}
@@ -65,8 +65,23 @@ func TestBlockedSitesAreNormalized(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again := reloaded.Settings(); !again.FocusLockdown || len(again.BlockedSites) != 3 {
+	if again := reloaded.Settings(); !again.FocusLockdown || len(again.BlockedSites) != 4 {
 		t.Fatalf("reloaded settings: %+v", again)
+	}
+}
+
+func TestNormalizeSiteLocalhost(t *testing.T) {
+	// The literal localhost is a site (every local port); other dotless names are not.
+	for in, want := range map[string]string{
+		"localhost":                   "localhost",
+		"http://localhost:3000/learn": "localhost",
+		"LOCALHOST.":                  "localhost",
+		"localhostx":                  "",
+		"my-intranet":                 "",
+	} {
+		if got := normalizeSite(in); got != want {
+			t.Fatalf("normalizeSite(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

@@ -151,7 +151,11 @@ class FocusGuard {
   // title shows a different one.
   async readSite(foreground, identified, rules) {
     const title = cleanBrowserTitle(identified.browser, foreground.title);
-    let site = titleEntry(foreground.title, [...rules.allowSites, ...rules.sites].sort((a, b) => b.length - a.length));
+    // Dotless entries (localhost) stay out of title matching: the bare word
+    // appears in ordinary titles, so they are recognized through history only.
+    let site = titleEntry(foreground.title, [...rules.allowSites, ...rules.sites]
+      .filter((entry) => entry.includes('.'))
+      .sort((a, b) => b.length - a.length));
     let guessed = false;
     if (!site) {
       let found = null;

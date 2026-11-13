@@ -81,6 +81,19 @@ func TestFocusSessionLifecycle(t *testing.T) {
 	}
 }
 
+func TestFocusSessionAcceptsLocalhost(t *testing.T) {
+	server := newTestServer(t, "")
+	session := server.URL + "/api/v1/focus/session"
+	response := do(t, http.MethodPost, session, `{"goal":"g","source":"agent","durationSeconds":600,"mode":"allow","sites":[],"allowSites":["http://localhost:3000"]}`, auth())
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("start status = %d", response.StatusCode)
+	}
+	allowSites := decodeBody(t, response)["session"].(map[string]any)["allowSites"].([]any)
+	if len(allowSites) != 1 || allowSites[0] != "localhost" {
+		t.Fatalf("allowSites = %v", allowSites)
+	}
+}
+
 func TestScreenTimeSourceEndsAnySession(t *testing.T) {
 	server := newTestServer(t, "")
 	session := server.URL + "/api/v1/focus/session"

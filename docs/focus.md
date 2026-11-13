@@ -31,6 +31,10 @@ App list entries are normalized ids: lowercased basename minus `.exe`/`.app`
 (`C:\Tools\VSCode\code.exe` -> `code`, `Visual Studio Code` -> `visual studio
 code`). An entry matches the exe id, the display name, the bundle id or the
 aumid. Site entries are bare hostnames; a listed site covers its subdomains.
+The literal `localhost` is also accepted — ports are dropped, so it covers
+every local port — but it is recognized from browser history, not the window
+title, so a localhost page in a private window is covered after the unknown-page
+grace like any unnamed page.
 
 `PATCH /api/v1/settings` (or the UI) can still flip `focusLockdown` during a
 session, but the change is undone when the session ends.

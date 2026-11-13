@@ -123,6 +123,8 @@ async function main() {
       { kind: 'page', label: 'Google Chrome' }, 'a guessed listed site is judged like no site');
     assert.equal(judge(rules, { app, browser: true, site: 'github.com', guessed: false }), null,
       'a title-matched listed site stays open');
+    const local = rulesFor({}, session({ sites: [], allowSites: ['localhost'] }), clock);
+    assert.equal(judge(local, { app, browser: true, site: 'localhost' }), null, 'localhost opens when listed');
   });
 
   await scenario('new-tab-like titles count as blank pages', async () => {
@@ -240,6 +242,28 @@ async function main() {
     const blocked = makeGuard({ store, foreground: fg('example.com - Google Chrome'), identified });
     await blocked.guard.check();
     assert.equal(blocked.cover.shown && blocked.cover.shown.kind, 'site');
+  });
+
+  await scenario('a localhost page is trusted through history, not the title', async () => {
+    const store = { settings: {}, focusSession: session({ apps: [], sites: [], allowSites: ['localhost'] }) };
+    const identified = () => ({ name: 'Google Chrome', browser: { id: 'chrome', name: 'Google Chrome', family: 'chromium' } });
+    const fg = (pid, title) => ({ current: { pid, exePath: 'C:\\chrome.exe', title } });
+    // A trusted history visit for localhost opens the page the title cannot name.
+    const found = { domain: 'localhost', match: 100, guessed: false, visitedAt: clock - 3600000 };
+    const { guard, cover } = makeGuard({ store, foreground: fg(40, 'Syllo - Google Chrome'), identified, found });
+    await guard.check();
+    assert.equal(cover.shown, null);
+    clock += UNKNOWN_PAGE_MS + 100;
+    await guard.check();
+    assert.equal(cover.shown, null, 'the history match keeps localhost open');
+    // But the bare word in a title opens nothing: without history it is an
+    // ordinary unknown page.
+    const { guard: guard2, cover: cover2 } = makeGuard({ store, foreground: fg(41, 'Fix localhost errors - Google Chrome'), identified });
+    await guard2.check();
+    assert.equal(cover2.shown, null, 'the title word earns only the grace');
+    clock += UNKNOWN_PAGE_MS + 100;
+    await guard2.check();
+    assert.equal(cover2.shown && cover2.shown.kind, 'page');
   });
 
   await scenario('a missing title is not a new tab and still gets covered', async () => {

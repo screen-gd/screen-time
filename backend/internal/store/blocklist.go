@@ -15,7 +15,9 @@ var (
 	siteHost   = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
 )
 
-// normalizeSite turns a pasted address ("https://www.reddit.com/r/all", "*.reddit.com") into a bare hostname, or "".
+// normalizeSite turns a pasted address ("https://www.reddit.com/r/all", "*.reddit.com",
+// "localhost:3000") into a bare hostname, or "". Entries are dotted hostnames,
+// except the literal localhost, which is allowed for local dev pages.
 func normalizeSite(value string) string {
 	text := siteScheme.ReplaceAllString(strings.ToLower(strings.TrimSpace(value)), "")
 	if i := strings.IndexAny(text, "/?#"); i >= 0 {
@@ -28,6 +30,9 @@ func normalizeSite(value string) string {
 	text = strings.TrimPrefix(text, "*.")
 	text = strings.TrimPrefix(text, "www.")
 	text = strings.TrimSuffix(text, ".")
+	if text == "localhost" {
+		return text
+	}
 	if len(text) > 253 || !siteHost.MatchString(text) {
 		return ""
 	}
