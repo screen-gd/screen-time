@@ -49,6 +49,40 @@ func normalizeSiteList(list []string) []string {
 	return out
 }
 
+var innerSpace = regexp.MustCompile(`\s+`)
+
+// normalizeApp turns a path or display name into an app id, or "". Mirrors
+// normalizeApp in electron/blocklist.js: "C:\Tools\Resolve.exe" -> "resolve",
+// "/Applications/Safari.app" -> "safari", "Visual Studio Code" -> "visual studio code".
+func normalizeApp(value string) string {
+	text := strings.ToLower(strings.TrimSpace(value))
+	if i := strings.LastIndexAny(text, `/\`); i >= 0 {
+		text = text[i+1:]
+	}
+	text = strings.TrimSuffix(text, ".exe")
+	text = strings.TrimSuffix(text, ".app")
+	text = innerSpace.ReplaceAllString(strings.TrimSpace(text), " ")
+	if len(text) < 1 || len(text) > 128 {
+		return ""
+	}
+	return text
+}
+
+func normalizeAppList(list []string) []string {
+	out := []string{}
+	for _, item := range list {
+		app := normalizeApp(item)
+		if app == "" || contains(out, app) {
+			continue
+		}
+		out = append(out, app)
+		if len(out) >= blockedSitesLimit {
+			break
+		}
+	}
+	return out
+}
+
 func contains(list []string, value string) bool {
 	for _, item := range list {
 		if item == value {
