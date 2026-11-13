@@ -388,6 +388,22 @@ async function main() {
     assert.equal(guard.trackTimer, null, 'the tracker stopped with the cover');
   });
 
+  await scenario('another window of the same browser gets its own check, not the cover', async () => {
+    const browser = { id: 'chrome', name: 'Google Chrome', family: 'chromium' };
+    const store = { settings: {}, focusSession: session({ sites: ['github.com'] }) };
+    const blocked = { pid: 60, exePath: 'C:\\chrome.exe', title: 'reddit.com - Google Chrome', bounds: { x: 0, y: 0, width: 900, height: 700 } };
+    const foreground = { current: blocked };
+    const found = { domain: 'reddit.com', match: 100, guessed: false, visitedAt: clock };
+    const { guard, cover } = makeGuard({ store, foreground, found, identified: () => ({ name: 'Google Chrome', browser }) });
+    await guard.check();
+    assert.equal(cover.shown.kind, 'site', 'the blocked page is covered');
+    // Same process, another window on an allowed site: no move, a check lifts the cover.
+    foreground.current = { ...blocked, title: 'github.com - Google Chrome', bounds: { x: 950, y: 0, width: 900, height: 700 } };
+    await guard.trackTick();
+    assert.deepEqual(cover.moves, [], 'the cover did not jump onto the allowed window');
+    assert.equal(cover.shown, null, 'the allowed window is not covered');
+  });
+
   await scenario('the local store keeps a session and restores the lockdown', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tally-focus-'));
     const file = path.join(dir, 'tally-data.json');

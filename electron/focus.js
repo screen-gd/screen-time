@@ -57,7 +57,7 @@ class FocusGuard {
     this.platform = platform;
     this.timer = null;
     this.trackTimer = null;
-    this.trackedPid = null;
+    this.tracked = null;
     this.busy = false;
     this.blocking = null;
     this.unknownKey = null;
@@ -204,7 +204,7 @@ class FocusGuard {
     this.blocking = { key: foreground.pid, target };
     const placed = this.placeCover(foreground);
     this.cover.show(target, placed && placed.rect);
-    this.track(foreground.pid);
+    this.track(foreground);
   }
 
   clear() {
@@ -216,11 +216,14 @@ class FocusGuard {
   }
 
   // While a cover shows, a fast ticker follows the covered window: a move
-  // slides the cover along, and another window coming forward ends the cover
-  // early through a normal check. The cover itself taking focus is ignored.
-  track(pid) {
+  // slides the cover along, and anything else coming forward ends the cover
+  // early through a normal check. The window is known by pid and title, since
+  // one browser process owns every tab and window: another window or tab of
+  // the same browser gets its own check instead of inheriting the cover. The
+  // cover itself taking focus is ignored.
+  track(foreground) {
     this.stopTracking();
-    this.trackedPid = pid;
+    this.tracked = { pid: foreground.pid, title: foreground.title };
     this.trackTimer = setInterval(() => this.trackTick(), this.trackInterval);
     if (this.trackTimer.unref) this.trackTimer.unref();
   }
@@ -229,7 +232,7 @@ class FocusGuard {
     const foreground = this.readWindow();
     if (!foreground || foreground.error) return null;
     if (foreground.pid === this.selfPid) return null;
-    if (foreground.pid === this.trackedPid) {
+    if (this.tracked && foreground.pid === this.tracked.pid && foreground.title === this.tracked.title) {
       const placed = this.placeCover(foreground);
       if (placed && placed.rect) this.cover.move(placed.rect);
       return null;
@@ -240,7 +243,7 @@ class FocusGuard {
   stopTracking() {
     if (this.trackTimer) clearInterval(this.trackTimer);
     this.trackTimer = null;
-    this.trackedPid = null;
+    this.tracked = null;
   }
 }
 
