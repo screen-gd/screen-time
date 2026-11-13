@@ -122,9 +122,11 @@ function judge(rules, { app = {}, browser = false, site = null, blank = false })
   return null;
 }
 
-// Cleaned titles that mean "no page yet": a new tab shows nothing to judge.
+// Cleaned titles that mean "no page yet": a new tab shows nothing to judge. An
+// empty title is not blank — macOS without Accessibility reads no title at all
+// and must still reach the unknown-page cover.
 const BLANK_TITLES = new Set([
-  '', 'new tab', 'new private tab', 'new incognito tab', 'new inprivate tab',
+  'new tab', 'new private tab', 'new incognito tab', 'new inprivate tab',
   'inprivate', 'private browsing', 'start page', 'speed dial',
   ...Object.values(BROWSERS_BY_ID).map((browser) => browser.name.toLowerCase()),
   'mozilla firefox', 'zen browser',

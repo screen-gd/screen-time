@@ -9,9 +9,9 @@ const { alwaysAllowed, rulesFor, judge, blankPage } = require('./focus-rules');
 // Faster than the tracker's sampling so a blocked page is covered within about a second.
 const POLL_MS = 1000;
 
-// A history answer covers the page only if the title matched it closely, or the
-// visit is this fresh. A loose match to an old visit (or the latest-visit guess
-// from browsers.lookup) can name a blocked site the browser is no longer on.
+// A history answer is trusted only when the title actually matched it — a
+// fresh visit or a strong match. The latest-visit guess is never trusted:
+// it may belong to another tab while the title shows a different site.
 const FRESH_VISIT_MS = 60 * 1000;
 const STRONG_MATCH = 90;
 
@@ -138,17 +138,19 @@ class FocusGuard {
     }
   }
 
-  // Resolves the site a browser shows: history first, then the window title
-  // against both site lists.
+  // Resolves the site a browser shows: the title first — a listed site it
+  // names wins outright, and fresher than any history — then the history
+  // lookup, whose answer must have matched the title to be trusted.
   async readSite(foreground, identified, rules) {
     const title = cleanBrowserTitle(identified.browser, foreground.title);
-    let site = null;
-    let found = null;
-    try { found = await this.lookup(identified.browser, title, { negativeMs: LOOKUP_RETRY_MS }); } catch { found = null; }
-    const fresh = found && Date.now() - found.visitedAt < FRESH_VISIT_MS;
-    const trusted = found && (fresh || (!found.guessed && found.match >= STRONG_MATCH));
-    if (trusted) site = normalizeSite(found.domain);
-    if (!site) site = titleEntry(foreground.title, [...rules.sites, ...rules.allowSites]);
+    let site = titleEntry(foreground.title, [...rules.sites, ...rules.allowSites]);
+    if (!site) {
+      let found = null;
+      try { found = await this.lookup(identified.browser, title, { negativeMs: LOOKUP_RETRY_MS }); } catch { found = null; }
+      const fresh = found && Date.now() - found.visitedAt < FRESH_VISIT_MS;
+      const trusted = found && !found.guessed && (fresh || found.match >= STRONG_MATCH);
+      if (trusted) site = normalizeSite(found.domain);
+    }
     return { site, blank: blankPage(title) };
   }
 

@@ -117,12 +117,16 @@ async function main() {
   });
 
   await scenario('new-tab-like titles count as blank pages', async () => {
-    for (const title of ['New tab', 'New Private Tab', 'new incognito tab', 'InPrivate', 'Private Browsing', 'Start Page', 'Speed Dial', 'Google Chrome', 'Mozilla Firefox', '']) {
+    for (const title of ['New tab', 'New Private Tab', 'new incognito tab', 'InPrivate', 'Private Browsing', 'Start Page', 'Speed Dial', 'Google Chrome', 'Mozilla Firefox']) {
       assert.equal(blankPage(title), true, title);
     }
-    for (const title of ['Inbox - Gmail', 'Weekly notes', 'github.com']) {
+    for (const title of ['Inbox - Gmail', 'Weekly notes', 'github.com', '']) {
+      // '' is not a new tab: a reader that returns no title must still reach the cover.
       assert.equal(blankPage(title), false, title);
     }
+    const rules = rulesFor({}, session({ sites: ['github.com'] }), clock);
+    assert.deepEqual(judge(rules, { app: { id: 'chrome', name: 'Google Chrome' }, browser: true, site: null, blank: false }),
+      { kind: 'page', label: 'Google Chrome' }, 'an unreadable page is an unknown page');
   });
 
   function makeGuard({ store, foreground, found = null, identified = null }) {
@@ -190,6 +194,41 @@ async function main() {
     foreground.current = { pid: 10, exePath: 'C:\\chrome.exe', title: 'Other page - Google Chrome' };
     await guard.check();
     assert.equal(cover.shown, null);
+  });
+
+  await scenario('a missing title is not a new tab and still gets covered', async () => {
+    const store = { settings: {}, focusSession: session({ sites: ['github.com'] }) };
+    const foreground = { current: { pid: 11, exePath: 'C:\\chrome.exe', title: '' } };
+    const identified = () => ({ name: 'Google Chrome', browser: { id: 'chrome', name: 'Google Chrome', family: 'chromium' } });
+    const { guard, cover } = makeGuard({ store, foreground, identified });
+    await guard.check();
+    assert.equal(cover.shown, null, 'an empty title gets the same grace as a named unknown page');
+    clock += UNKNOWN_PAGE_MS + 100;
+    await guard.check();
+    assert.equal(cover.shown.kind, 'page');
+    assert.equal(cover.shown.label, 'Google Chrome');
+  });
+
+  await scenario('the title wins over a history guess in both directions', async () => {
+    const browser = { id: 'chrome', name: 'Google Chrome', family: 'chromium' };
+    const identified = () => ({ name: 'Google Chrome', browser });
+    // The title names a site the session lacks; a fresh guess at a listed one
+    // cannot clear it — the guess may belong to another tab entirely.
+    const store = { settings: {}, focusSession: session({ sites: ['github.com'], allowSites: [] }) };
+    const foreground = { current: { pid: 12, exePath: 'C:\\chrome.exe', title: 'reddit.com - Google Chrome' } };
+    const found = { domain: 'github.com', guessed: true, visitedAt: clock - 10 * 1000, match: 0 };
+    const { guard, cover } = makeGuard({ store, foreground, identified, found });
+    await guard.check();
+    assert.equal(cover.shown, null, 'unknown pages get the grace first');
+    clock += UNKNOWN_PAGE_MS + 100;
+    await guard.check();
+    assert.equal(cover.shown.kind, 'page', 'a guessed listed visit does not open an unlisted page');
+    // And a title naming a listed site beats a guess at another site.
+    const foreground2 = { current: { pid: 13, exePath: 'C:\\chrome.exe', title: 'github.com - Google Chrome' } };
+    const found2 = { domain: 'reddit.com', guessed: true, visitedAt: clock - 10 * 1000, match: 0 };
+    const { guard: guard2, cover: cover2 } = makeGuard({ store, foreground: foreground2, identified, found: found2 });
+    await guard2.check();
+    assert.equal(cover2.shown, null, 'the title-open site stays open');
   });
 
   await scenario('a session expiring lifts the cover on the next check', async () => {
