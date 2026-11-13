@@ -339,7 +339,12 @@ async function main() {
   });
 
   function makeGuard({ settings, foreground, found = null, browser = { id: 'chrome', name: 'Google Chrome', family: 'chromium' } }) {
-    const cover = { shown: null, shows: 0, show(target) { this.shown = target; this.shows += 1; }, hide() { this.shown = null; } };
+    const cover = {
+      shown: null, shows: 0, rect: null, moves: [],
+      show(target, rect) { this.shown = target; this.shows += 1; this.rect = rect; },
+      move(rect) { this.moves.push(rect); this.rect = rect; },
+      hide() { this.shown = null; },
+    };
     const lookups = [];
     const guard = new FocusGuard({
       store: { settings, focusSession: null },
@@ -347,6 +352,9 @@ async function main() {
       readWindow: () => foreground.current,
       identifyApp: (fg) => ({ name: fg.exePath.replace(/.*[\\/]/, ''), browser: fg.exePath.includes('chrome') ? browser : null }),
       lookup: async (b, title, options) => { lookups.push({ title, options }); return found.current; },
+      placeCover: (win) => ({ rect: win.bounds || null, fallback: !win.bounds }),
+      // A real ticker would race the scenarios; trackTick drives it instead.
+      trackInterval: 60 * 60 * 1000,
       selfPid: 1,
       platform: 'win32',
     });

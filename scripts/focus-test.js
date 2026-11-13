@@ -13,6 +13,7 @@ const path = require('node:path');
 const { normalizeApp, normalizeAppList, appIdOf } = require('../electron/blocklist');
 const { alwaysAllowed, rulesFor, judge, blankPage } = require('../electron/focus-rules');
 const { FocusGuard, UNKNOWN_PAGE_MS } = require('../electron/focus');
+const { coverRect } = require('../electron/cover-bounds');
 const { Store } = require('../electron/tracker/store');
 const { connectionPath, writeConnection, removeConnection } = require('../electron/connection-file');
 
@@ -140,14 +141,22 @@ async function main() {
       { kind: 'page', label: 'Google Chrome' }, 'an unreadable page is an unknown page');
   });
 
-  function makeGuard({ store, foreground, found = null, identified = null }) {
-    const cover = { shown: null, shows: 0, show(target) { this.shown = target; this.shows += 1; }, hide() { this.shown = null; } };
+  function makeGuard({ store, foreground, found = null, identified = null, placeCover = null }) {
+    const cover = {
+      shown: null, shows: 0, rect: null, moves: [],
+      show(target, rect) { this.shown = target; this.shows += 1; this.rect = rect; },
+      move(rect) { this.moves.push(rect); this.rect = rect; },
+      hide() { this.shown = null; },
+    };
     const guard = new FocusGuard({
       store,
       cover,
       readWindow: () => foreground.current,
       identifyApp: identified || ((fg) => ({ name: fg.exePath.replace(/.*[\\/]/, ''), browser: null })),
       lookup: async () => (typeof found === 'function' ? found() : found),
+      placeCover: placeCover || ((win) => ({ rect: win.bounds || null, fallback: !win.bounds })),
+      // A real 150 ms ticker would race the scenario; trackTick drives it.
+      trackInterval: 60 * 60 * 1000,
       selfPid: 1,
       platform: 'win32',
     });
@@ -214,7 +223,7 @@ async function main() {
     const foreground = { current: fg('Loading - Google Chrome') };
     const { guard, cover } = makeGuard({ store, foreground, identified });
     await guard.check();
-    // The title keeps changing while the clock advances — one window, one grace.
+    // The title keeps changing while the clock advances: one window, one grace.
     clock += UNKNOWN_PAGE_MS - 100;
     foreground.current = fg('Still loading - Google Chrome');
     await guard.check();
@@ -283,7 +292,7 @@ async function main() {
     const browser = { id: 'chrome', name: 'Google Chrome', family: 'chromium' };
     const identified = () => ({ name: 'Google Chrome', browser });
     // The title names a site the session lacks; a fresh guess at a listed one
-    // cannot clear it — the guess may belong to another tab entirely.
+    // cannot clear it; the guess may belong to another tab entirely.
     const store = { settings: {}, focusSession: session({ sites: ['github.com'], allowSites: [] }) };
     const foreground = { current: { pid: 12, exePath: 'C:\\chrome.exe', title: 'reddit.com - Google Chrome' } };
     const found = { domain: 'github.com', guessed: true, visitedAt: clock - 10 * 1000, match: 0 };
@@ -312,6 +321,71 @@ async function main() {
     await guard.check();
     assert.equal(cover.shown, null, 'the expired session stopped enforcing');
     assert.equal(guard.active(), false);
+  });
+
+  await scenario('the cover rect is the window rect in dips', async () => {
+    const one = [{ bounds: { x: 0, y: 0, width: 1600, height: 900 } }];
+    const two = [
+      { bounds: { x: 0, y: 0, width: 1600, height: 900 } },
+      { bounds: { x: 1600, y: 0, width: 1600, height: 900 } },
+    ];
+    // win32 at 150% scaling converts the whole rect through screenToDipRect.
+    const win = coverRect({
+      bounds: { x: 300, y: 150, width: 1500, height: 900, unit: 'physical' },
+      platform: 'win32', displays: one, cursor: { x: 0, y: 0 },
+      toDipRect: (r) => ({ x: r.x / 1.5, y: r.y / 1.5, width: r.width / 1.5, height: r.height / 1.5 }),
+      toDipPoint: (p) => ({ x: p.x / 1.5, y: p.y / 1.5 }),
+    });
+    assert.deepEqual(win, { rect: { x: 200, y: 100, width: 1000, height: 600 }, fallback: false });
+    // linux at scale 2 converts the two corners, not the whole rect.
+    const linux = coverRect({
+      bounds: { x: 200, y: 100, width: 1600, height: 1200, unit: 'physical' },
+      platform: 'linux', displays: one, cursor: { x: 0, y: 0 },
+      toDipPoint: (p) => ({ x: p.x / 2, y: p.y / 2 }),
+    });
+    assert.deepEqual(linux, { rect: { x: 100, y: 50, width: 800, height: 600 }, fallback: false });
+    // A window spanning two side-by-side displays keeps one rect across both.
+    const spanning = coverRect({
+      bounds: { x: 1400, y: 100, width: 600, height: 400, unit: 'dip' },
+      platform: 'darwin', displays: two, cursor: { x: 0, y: 0 },
+    });
+    assert.deepEqual(spanning, { rect: { x: 1400, y: 100, width: 600, height: 400 }, fallback: false });
+    // A window half off-screen is clipped to the parts on a display.
+    const clipped = coverRect({
+      bounds: { x: -200, y: 100, width: 600, height: 400, unit: 'dip' },
+      platform: 'darwin', displays: two, cursor: { x: 0, y: 0 },
+    });
+    assert.deepEqual(clipped, { rect: { x: 0, y: 100, width: 400, height: 400 }, fallback: false });
+    // Missing or all-off-screen bounds fall back to the display under the cursor.
+    const missing = coverRect({ bounds: null, platform: 'win32', displays: two, cursor: { x: 2000, y: 50 } });
+    assert.deepEqual(missing, { rect: { x: 1600, y: 0, width: 1600, height: 900 }, fallback: true });
+    const off = coverRect({
+      bounds: { x: 9000, y: 9000, width: 400, height: 300, unit: 'dip' },
+      platform: 'darwin', displays: two, cursor: { x: 100, y: 100 },
+    });
+    assert.deepEqual(off, { rect: { x: 0, y: 0, width: 1600, height: 900 }, fallback: true });
+  });
+
+  await scenario('the cover follows the blocked window and ends when it leaves', async () => {
+    const store = { settings: {}, focusSession: session() };
+    const win = { pid: 40, exePath: 'C:\\Notion\\Notion.exe', title: 'Notes', bounds: { x: 10, y: 10, width: 800, height: 600 } };
+    const foreground = { current: win };
+    const { guard, cover } = makeGuard({
+      store, foreground, identified: () => ({ name: 'Notion', browser: null }),
+    });
+    await guard.check();
+    assert.equal(cover.shown.kind, 'app');
+    assert.deepEqual(cover.rect, { x: 10, y: 10, width: 800, height: 600 }, 'the cover starts on the window');
+    // The window moves: the next track tick slides the cover along.
+    foreground.current = { ...win, bounds: { x: 50, y: 80, width: 700, height: 500 } };
+    guard.trackTick();
+    assert.deepEqual(cover.moves.at(-1), { x: 50, y: 80, width: 700, height: 500 }, 'the cover followed the move');
+    assert.equal(cover.shown.kind, 'app', 'still covered after the move');
+    // Another window coming forward runs a check that lifts the cover.
+    foreground.current = { pid: 55, exePath: 'C:\\Tools\\code.exe', title: 'repo' };
+    await guard.trackTick();
+    assert.equal(cover.shown, null, 'a different window in front lifts the cover');
+    assert.equal(guard.trackTimer, null, 'the tracker stopped with the cover');
   });
 
   await scenario('the local store keeps a session and restores the lockdown', async () => {

@@ -86,7 +86,7 @@ Pause from the tray or the sidebar. screen-time can start hidden at login. Setti
 
 ## Focus sessions
 
-On the Focus page, pick a goal, a mode and a length, and start a session. Allow mode permits only the listed apps and sites; block mode covers only the listed ones. The screen is covered while something outside the rules is in front — the overlay can always be dismissed to reach screen-time, and quitting ends enforcement. Sessions end by themselves, agents can run them through the bundled MCP server, and the old lockdown switch is now the "block list between sessions" setting. See [docs/focus.md](docs/focus.md).
+On the Focus page, pick a goal, a mode and a length, and start a session. Allow mode permits only the listed apps and sites; block mode covers only the listed ones. While something outside the rules is in front, that window is covered, and the cover follows it while the rest of the screen stays usable. The overlay can always be dismissed to reach screen-time, and quitting ends enforcement. Sessions end by themselves, agents can run them through the bundled MCP server, and the old lockdown switch is now the "block list between sessions" setting. See [docs/focus.md](docs/focus.md).
 
 ## Where the data lives
 

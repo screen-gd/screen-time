@@ -97,7 +97,7 @@ function appListed(apps, app) {
 // { kind: 'app'|'site'|'page', label } for the cover. `app` is
 // { id, name, bundleId, aumid }, `site` the normalized domain or null,
 // `guessed` marks a site the history lookup guessed rather than matched in the
-// title — it may cover but never open — and `blank` a new-tab-like page.
+// title (it may cover but never open), and `blank` a new-tab-like page.
 function judge(rules, { app = {}, browser = false, site = null, guessed = false, blank = false }) {
   if (!rules) return null;
   const label = app.name || app.id || 'This app';
@@ -126,8 +126,8 @@ function judge(rules, { app = {}, browser = false, site = null, guessed = false,
 }
 
 // Cleaned titles that mean "no page yet": a new tab shows nothing to judge. An
-// empty title is not blank — macOS without Accessibility reads no title at all
-// and must still reach the unknown-page cover.
+// empty title is not blank: macOS without Accessibility reads no title at all,
+// and such a page must still reach the unknown-page cover.
 const BLANK_TITLES = new Set([
   'new tab', 'new private tab', 'new incognito tab', 'new inprivate tab',
   'inprivate', 'private browsing', 'start page', 'speed dial',

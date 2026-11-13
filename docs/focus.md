@@ -1,12 +1,26 @@
 # Focus sessions
 
 A focus session has a goal, a mode, app and site lists, and an end time. While
-it runs, screen-time covers the screen whenever the window in front is not
-allowed. It ends by itself at `endsAt`, including after a crash or restart, and
-ending restores the `focusLockdown` value from before the session.
+it runs, screen-time covers the window in front whenever that window is not
+allowed. The cover is the size of that window and follows it as it moves or
+resizes, so the rest of the screen stays usable. It ends by itself at
+`endsAt`, including after a crash or restart, and ending restores the
+`focusLockdown` value from before the session.
 
-The cover is an overlay, not a lock: it can always be dismissed to reach
-screen-time, and quitting screen-time ends enforcement entirely.
+The cover is an overlay, not a lock: it never takes the keyboard, it can
+always be dismissed to reach screen-time, and quitting screen-time ends
+enforcement entirely.
+
+A window-sized cover needs the window's bounds:
+
+- Windows: read from DWM (the visible frame), converted from physical pixels
+  to Electron's DIP units per monitor, so scaled displays line up.
+- macOS: read through Accessibility (`AXPosition`, `AXSize`), so only with the
+  Accessibility grant.
+- Linux X11: the window's geometry plus its window-manager frame.
+
+Where bounds are unavailable (macOS without the grant, Wayland, a failed read),
+the cover falls back to covering the whole display under the pointer.
 
 ## Modes and rules
 
@@ -31,10 +45,10 @@ App list entries are normalized ids: lowercased basename minus `.exe`/`.app`
 (`C:\Tools\VSCode\code.exe` -> `code`, `Visual Studio Code` -> `visual studio
 code`). An entry matches the exe id, the display name, the bundle id or the
 aumid. Site entries are bare hostnames; a listed site covers its subdomains.
-The literal `localhost` is also accepted — ports are dropped, so it covers
-every local port — but it is recognized from browser history, not the window
-title, so a localhost page in a private window is covered after the unknown-page
-grace like any unnamed page.
+The literal `localhost` is also accepted. Ports are dropped, so it covers
+every local port. It is recognized from browser history, not the window title,
+so a localhost page in a private window is covered after the unknown-page grace
+like any unnamed page.
 
 `PATCH /api/v1/settings` (or the UI) can still flip `focusLockdown` during a
 session, but the change is undone when the session ends.
@@ -61,10 +75,10 @@ accepted as before.
 
 Body `{ goal, source, durationSeconds, mode?, apps?, sites?, allowSites? }`.
 
-- `201 { "session": Session }` — started. A session from the same source is
+- `201 { "session": Session }`: started. A session from the same source is
   replaced (new `id`, new times).
-- `409 { "session": <current> }` — a session from a different source is running.
-- `400 { "error": "..." }` — validation: `source` required, <= 64 chars;
+- `409 { "session": <current> }`: a session from a different source is running.
+- `400 { "error": "..." }`: validation: `source` required, <= 64 chars;
   `goal` required, <= 200 runes; `durationSeconds` a number in [60, 43200];
   `mode` only `allow` or `block`.
 
@@ -109,16 +123,16 @@ The file is `0600` on POSIX and removed on quit (only by the pid that wrote it).
 
 The backend binary doubles as an MCP server over stdio (newline-delimited
 JSON-RPC, logs only to stderr). It reads the connection file on every call, so
-it always talks to the running instance. Add it to your agent's MCP config —
-or copy the ready-made snippet from the Focus page (screen-time fills in the
-binary path):
+it always talks to the running instance. Add it to your agent's MCP config,
+or copy the ready-made snippet from the Focus page, where screen-time fills in
+the binary path:
 
 ```json
 { "mcpServers": { "screen-time": { "command": "<path to tally-backend>", "args": ["mcp"] } } }
 ```
 
-Packaged install on Windows:
-`%LOCALAPPDATA%\Programs\screen-time\resources\app.asar.unpacked\backend\tally-backend.exe`.
+In a packaged install the binary is in the install folder under
+`resources\app.asar.unpacked\backend\` (`tally-backend.exe` on Windows).
 
 When screen-time is not running, tool calls answer "screen-time is not
 running. Open it and try again."
@@ -127,12 +141,12 @@ Tools:
 
 | Tool | What it does |
 | --- | --- |
-| `get_catalog` | `{ days?: 1\|7\|30 }` — apps and sites screen-time has seen; use `id` values in lists |
+| `get_catalog` | `{ days?: 1\|7\|30 }`: apps and sites screen-time has seen; use `id` values in lists |
 | `get_focus_lists` | the saved mode and allow/block lists |
-| `set_focus_lists` | `{ mode?, allow?, block? }` — merge into the saved lists |
+| `set_focus_lists` | `{ mode?, allow?, block? }`: merge into the saved lists |
 | `get_focus_session` | the running session or null |
-| `start_focus_session` | `{ goal, minutes, mode?, apps?, sites?, allowSites?, source? }` — starts a session (minutes 1–720) |
-| `end_focus_session` | `{ source? }` — ends the session belonging to the source |
+| `start_focus_session` | `{ goal, minutes, mode?, apps?, sites?, allowSites?, source? }`: starts a session (minutes 1 to 720) |
+| `end_focus_session` | `{ source? }`: ends the session belonging to the source |
 
 A session started by an agent blocks other sources with a `409` until it ends;
 it can always be ended from the screen-time window.

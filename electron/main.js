@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, Menu, shell, Tray, nativeImage, powerMonitor, nativeTheme, systemPreferences } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, shell, Tray, nativeImage, powerMonitor, nativeTheme, systemPreferences, screen } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -12,6 +12,7 @@ const { Updater } = require('./updater');
 const { BackendStore, startBackend, stopBackend, backendBinary } = require('./backend-client');
 const { FocusGuard } = require('./focus');
 const { FocusCover } = require('./focus-cover');
+const { coverRect } = require('./cover-bounds');
 const { connectionPath, writeConnection, removeConnection } = require('./connection-file');
 
 const ROOT = path.join(__dirname, '..');
@@ -570,7 +571,20 @@ if (!app.requestSingleInstanceLock()) {
     // Demo and screenshot runs never cover the screen.
     if (!DEMO && !SCREENSHOT) {
       focusCover = new FocusCover({ root: ROOT });
-      focusGuard = new FocusGuard({ store, cover: focusCover });
+      focusGuard = new FocusGuard({
+        store,
+        cover: focusCover,
+        // The blocked window's native bounds become the cover's dip rect;
+        // screenToDipRect is Windows-only, screenToDipPoint Windows and Linux.
+        placeCover: (foreground) => coverRect({
+          bounds: foreground.bounds,
+          platform: process.platform,
+          displays: screen.getAllDisplays(),
+          cursor: screen.getCursorScreenPoint(),
+          toDipRect: process.platform === 'win32' ? (rect) => screen.screenToDipRect(null, rect) : null,
+          toDipPoint: process.platform === 'linux' ? (point) => screen.screenToDipPoint(point) : null,
+        }),
+      });
       focusGuard.sync();
       // The browser UI changes settings and sessions on the backend directly;
       // poll so the desktop follows it. Local sessions still need the poll for

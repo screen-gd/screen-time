@@ -1098,7 +1098,7 @@
       }),
       mode === 'allow' ? h('p', { class: 'note', text: 'screen-time, the desktop, the task switcher, the lock screen and Settings stay available; browsers open only the listed sites.' }) : null,
       mode === 'allow' && !apps.length && !sites.length
-        ? h('p', { class: 'field-error', text: 'The allow lists are empty — a session would cover everything but those basics.' })
+        ? h('p', { class: 'field-error', text: 'The allow lists are empty, so a session would cover everything but those basics.' })
         : null);
 
     const blockReady = (settings.focusBlockApps || []).length + blockedSites(settings).length > 0;

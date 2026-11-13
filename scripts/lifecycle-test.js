@@ -86,7 +86,8 @@ async function check(hidden, backend = false) {
     './connection-file': { connectionPath: () => 'x', writeConnection() {}, removeConnection() {} },
     './updater': { Updater: class { constructor() { this.state = {}; } } },
     './focus': { FocusGuard: class { sync() {} stop() {} } },
-    './focus-cover': { FocusCover: class { hide() {} destroy() {} owns() { return false; } } },
+    './focus-cover': { FocusCover: class { hide() {} destroy() {} move() {} owns() { return false; } } },
+    './cover-bounds': { coverRect: () => ({ rect: null, fallback: true }) },
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8'), {
     require: name => mocks[name] || require(name),

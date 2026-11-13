@@ -1,20 +1,19 @@
 'use strict';
 
 const path = require('node:path');
-const { app, BrowserWindow, screen } = require('electron');
+const { app, BrowserWindow } = require('electron');
 
-// One always-on-top window per display, so a blocked page is hidden whichever
-// screen the browser is on. Windows are kept and reused between blocks.
+// One always-on-top window the size of the window it covers. It moves with
+// the blocked window, is reused between blocks, and never takes the keys.
 class FocusCover {
   constructor({ root }) {
     this.root = root;
-    this.windows = new Map(); // display id -> BrowserWindow
+    this.win = null;
     this.target = null;
   }
 
-  create(display) {
+  create() {
     const win = new BrowserWindow({
-      ...display.bounds,
       show: false,
       frame: false,
       resizable: false,
@@ -50,63 +49,63 @@ class FocusCover {
 
   // The verdict decides the cover's copy: { kind, label, mode, goal, endsAt }.
   // Only a change reloads the page; the remaining time ticks on the page itself.
-  show(target) {
+  // rect is the dip bounds the cover takes, usually the blocked window's frame.
+  show(target, rect) {
     const key = JSON.stringify(target);
     const query = {};
     for (const name of ['kind', 'label', 'mode', 'goal', 'endsAt']) {
       if (target[name] !== null && target[name] !== undefined) query[name] = String(target[name]);
     }
-    const displays = screen.getAllDisplays();
-    for (const [id, win] of this.windows) {
-      if (win.isDestroyed() || !displays.some((display) => display.id === id)) {
-        if (!win.isDestroyed()) win.destroy();
-        this.windows.delete(id);
-      }
+    if (!this.win || this.win.isDestroyed()) {
+      this.win = this.create();
+      this.win.shownKey = null;
     }
-    for (const display of displays) {
-      let win = this.windows.get(display.id);
-      if (!win) {
-        win = this.create(display);
-        this.windows.set(display.id, win);
-      }
-      win.setBounds(display.bounds);
-      if (win.shownKey !== key) {
-        win.shownKey = key;
-        win.loadFile(path.join(this.root, 'app', 'focus.html'), { query });
-      }
-      // Inactive, so keys still reach the browser underneath: Ctrl+W closes the tab.
-      if (!win.isVisible()) win.showInactive();
-      win.moveTop();
+    const win = this.win;
+    if (rect) this.place(win, rect);
+    if (win.shownKey !== key) {
+      win.shownKey = key;
+      win.loadFile(path.join(this.root, 'app', 'focus.html'), { query });
     }
+    // Inactive, so keys still reach the browser underneath: Ctrl+W closes the tab.
+    if (!win.isVisible()) win.showInactive();
+    win.moveTop();
     this.target = target;
+  }
+
+  // setBounds once; mixed-DPI moves on Windows can rescale it, so a mismatch
+  // earns a second setBounds with the same numbers.
+  place(win, rect) {
+    const now = win.getBounds();
+    if (now.x === rect.x && now.y === rect.y && now.width === rect.width && now.height === rect.height) return;
+    win.setBounds(rect);
+    const applied = win.getBounds();
+    if (applied.x !== rect.x || applied.y !== rect.y || applied.width !== rect.width || applied.height !== rect.height) {
+      win.setBounds(rect);
+    }
+  }
+
+  // Follow the blocked window between checks.
+  move(rect) {
+    if (!rect || !this.win || this.win.isDestroyed()) return;
+    this.place(this.win, rect);
   }
 
   hide() {
     this.target = null;
-    for (const win of this.windows.values()) {
-      if (!win.isDestroyed() && win.isVisible()) win.hide();
-    }
+    if (this.win && !this.win.isDestroyed() && this.win.isVisible()) this.win.hide();
   }
 
   isFocused() {
-    for (const win of this.windows.values()) {
-      if (!win.isDestroyed() && win.isVisible() && win.isFocused()) return true;
-    }
-    return false;
+    return Boolean(this.win) && !this.win.isDestroyed() && this.win.isFocused();
   }
 
   owns(webContents) {
-    for (const win of this.windows.values()) {
-      if (!win.isDestroyed() && win.webContents === webContents) return true;
-    }
-    return false;
+    return Boolean(this.win) && !this.win.isDestroyed() && this.win.webContents === webContents;
   }
 
   destroy() {
-    for (const win of this.windows.values()) {
-      if (!win.isDestroyed()) win.destroy();
-    }
-    this.windows.clear();
+    if (this.win && !this.win.isDestroyed()) this.win.destroy();
+    this.win = null;
   }
 }
 

@@ -9,6 +9,9 @@ const { alwaysAllowed, rulesFor, judge, blankPage } = require('./focus-rules');
 // Faster than the tracker's sampling so a blocked page is covered within about a second.
 const POLL_MS = 1000;
 
+// While a cover shows, a faster ticker follows the blocked window's moves.
+const TRACK_MS = 150;
+
 // A history answer covers the page only if the title matched it closely, or the
 // visit is this fresh. A loose match to an old visit (or the latest-visit guess
 // from browsers.lookup) can name a blocked site the browser is no longer on.
@@ -26,8 +29,9 @@ const UNKNOWN_PAGE_MS = 4000;
 // The focus guard watches the window in front and covers the screen while a
 // session or the block list disallows it. Nothing is blocked on the network:
 // the cover stays up until the window or the rules change. `cover` is
-// { show(target), hide() }; the rest is injectable so the rules run without a
-// desktop.
+// { show(target, rect), hide(), move(rect) } and `placeCover` turns a
+// foreground reading into the cover's rect; the rest is injectable so the
+// rules run without a desktop.
 class FocusGuard {
   constructor({
     store,
@@ -36,6 +40,8 @@ class FocusGuard {
     lookup = browsers.lookup,
     identifyApp = identify,
     interval = POLL_MS,
+    trackInterval = TRACK_MS,
+    placeCover = () => null,
     selfPid = process.pid,
     platform = process.platform,
   }) {
@@ -45,9 +51,13 @@ class FocusGuard {
     this.lookup = lookup;
     this.identifyApp = identifyApp;
     this.interval = interval;
+    this.trackInterval = trackInterval;
+    this.placeCover = placeCover;
     this.selfPid = selfPid;
     this.platform = platform;
     this.timer = null;
+    this.trackTimer = null;
+    this.trackedPid = null;
     this.busy = false;
     this.blocking = null;
     this.unknownKey = null;
@@ -84,6 +94,7 @@ class FocusGuard {
   stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.stopTracking();
     this.clear();
   }
 
@@ -133,7 +144,7 @@ class FocusGuard {
       if (verdict && verdict.kind === 'page') {
         if (!this.pageGraceExpired(foreground)) verdict = null;
       } else {
-        // A page judged allowed — or covered another way — ends any open
+        // A page judged allowed, or covered another way, ends any open
         // grace; the next unknown page earns a fresh one.
         this.unknownKey = null;
       }
@@ -144,9 +155,9 @@ class FocusGuard {
     }
   }
 
-  // Resolves the site a browser shows: the title first — the longest listed
+  // Resolves the site a browser shows: the title first (the longest listed
   // site it names wins outright, so an allowSites exception beats its parent
-  // block — then the history lookup. A guessed answer is flagged so judge can
+  // block), then the history lookup. A guessed answer is flagged so judge can
   // let it cover, never open: it may name a site from another tab while the
   // title shows a different one.
   async readSite(foreground, identified, rules) {
@@ -191,15 +202,46 @@ class FocusGuard {
       endsAt: rules.session ? rules.session.endsAt : null,
     };
     this.blocking = { key: foreground.pid, target };
-    this.cover.show(target);
+    const placed = this.placeCover(foreground);
+    this.cover.show(target, placed && placed.rect);
+    this.track(foreground.pid);
   }
 
   clear() {
     this.blocking = null;
+    this.stopTracking();
     // The grace key survives a clear: it names a window, and only a different
     // window (or the same window after it earned a cover) should restart it.
     this.cover.hide();
   }
+
+  // While a cover shows, a fast ticker follows the covered window: a move
+  // slides the cover along, and another window coming forward ends the cover
+  // early through a normal check. The cover itself taking focus is ignored.
+  track(pid) {
+    this.stopTracking();
+    this.trackedPid = pid;
+    this.trackTimer = setInterval(() => this.trackTick(), this.trackInterval);
+    if (this.trackTimer.unref) this.trackTimer.unref();
+  }
+
+  trackTick() {
+    const foreground = this.readWindow();
+    if (!foreground || foreground.error) return null;
+    if (foreground.pid === this.selfPid) return null;
+    if (foreground.pid === this.trackedPid) {
+      const placed = this.placeCover(foreground);
+      if (placed && placed.rect) this.cover.move(placed.rect);
+      return null;
+    }
+    return this.check().catch((error) => console.error('[tally] focus check failed:', error.message));
+  }
+
+  stopTracking() {
+    if (this.trackTimer) clearInterval(this.trackTimer);
+    this.trackTimer = null;
+    this.trackedPid = null;
+  }
 }
 
-module.exports = { FocusGuard, POLL_MS, UNKNOWN_PAGE_MS };
+module.exports = { FocusGuard, POLL_MS, UNKNOWN_PAGE_MS, TRACK_MS };
