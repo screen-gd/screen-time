@@ -1662,8 +1662,11 @@
     try {
       const active = document.activeElement;
       const editing = (state.route === 'settings' || state.route === 'focus') && active && view.contains(active) && /^(SELECT|INPUT)$/.test(active.tagName);
+      const sessionId = (snap) => (snap && snap.focus && snap.focus.session ? snap.focus.session.id : null);
+      const before = sessionId(state.snapshot);
       state.snapshot = await api.snapshot();
-      if (!editing) render();
+      // A session starting or ending swaps the whole Focus page, even mid-typing.
+      if (!editing || sessionId(state.snapshot) !== before) render();
       else renderRailState();
     } catch {
       // keep the last good screen rather than flashing an error over it;
