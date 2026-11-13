@@ -26,7 +26,9 @@ func TestPlatformPaths(t *testing.T) {
 	env := func(values map[string]string) func(string) string {
 		return func(key string) string { return values[key] }
 	}
-	if got := PathFor("windows", env(map[string]string{"APPDATA": `C:\Users\u\AppData\Roaming`})); got != `C:\Users\u\AppData\Roaming\screen-time\connection.json` {
+	// filepath.Join uses the host separator, so the expectation is built the
+	// same way the code builds it on every platform.
+	if got := PathFor("windows", env(map[string]string{"APPDATA": `C:\Users\u\AppData\Roaming`})); got != filepath.Join(`C:\Users\u\AppData\Roaming`, "screen-time", "connection.json") {
 		t.Fatalf("windows path = %q", got)
 	}
 	if got := PathFor("darwin", env(map[string]string{})); got != filepath.Join(home, "Library", "Application Support", "screen-time", "connection.json") {
