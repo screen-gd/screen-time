@@ -13,8 +13,12 @@ needs an automatically selected port; the process prints
 `TALLY_BACKEND_READY=http://...` when it is ready.
 
 The public endpoints are `GET /api/v1/snapshot`, `GET /api/v1/range?days=1|7|30`,
-`PATCH /api/v1/settings`, `POST /api/v1/record`, `POST /api/v1/clear`, and
-`GET /debug/metrics`. The default bind address is `127.0.0.1`.
+`PATCH /api/v1/settings`, `POST /api/v1/record`, `POST /api/v1/clear`,
+`GET|POST|DELETE /api/v1/focus/session`, `GET /api/v1/focus/catalog`,
+`GET|PATCH /api/v1/focus/lists`, and `GET /debug/metrics`. The default bind
+address is `127.0.0.1`. The focus endpoints and the `tally-backend mcp`
+subcommand (a stdio MCP server for agents) are documented in
+[../docs/focus.md](../docs/focus.md).
 
 Every `/api/` and `/debug/` request must send the per-process token in the
 `X-Tally-Token` header; otherwise the backend answers `401`. The token comes from

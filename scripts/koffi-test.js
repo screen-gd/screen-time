@@ -40,6 +40,9 @@ async function main() {
   if (foreground) {
     console.log('title       ', foreground.title || '(none)');
     console.log('process     ', foreground.exePath || '(unavailable)', `pid ${foreground.pid}`);
+    console.log('bounds      ', foreground.bounds
+      ? `${foreground.bounds.width}x${foreground.bounds.height} at ${foreground.bounds.x},${foreground.bounds.y} (${foreground.bounds.unit})`
+      : '(unavailable)');
     if (process.platform === 'darwin') {
       console.log('bundle id   ', foreground.bundleId || '(none)');
       console.log('app name    ', foreground.name || '(none)');

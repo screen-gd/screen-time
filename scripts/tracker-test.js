@@ -9,7 +9,7 @@
 const assert = require('node:assert/strict');
 const { Tracker } = require('../electron/tracker');
 const { identify } = require('../electron/tracker/apps');
-const { rootsFor } = require('../electron/tracker/browsers');
+const { rootsFor, domainOf } = require('../electron/tracker/browsers');
 const { normalizeSite, normalizeSiteList, blockedEntry, titleEntry } = require('../electron/blocklist');
 const { FocusGuard } = require('../electron/focus');
 const { Store } = require('../electron/tracker/store');
@@ -305,8 +305,11 @@ async function main() {
     assert.equal(normalizeSite('https://www.Reddit.com/r/all?x=1'), 'reddit.com');
     assert.equal(normalizeSite('*.youtube.com'), 'youtube.com');
     assert.equal(normalizeSite('user@x.com:8080'), 'x.com');
-    assert.equal(normalizeSite('localhost'), null);
+    assert.equal(normalizeSite('localhost'), 'localhost');
+    assert.equal(normalizeSite('http://localhost:3000/learn'), 'localhost');
+    assert.equal(normalizeSite('intranet'), null);
     assert.equal(normalizeSite('not a site'), null);
+    assert.equal(domainOf('http://localhost:3000/learn'), 'localhost');
     assert.deepEqual(normalizeSiteList(['reddit.com', 'REDDIT.com', 42, '', 'news.ycombinator.com']), ['reddit.com', 'news.ycombinator.com']);
     assert.deepEqual(normalizeSiteList(null), []);
   });
@@ -336,15 +339,24 @@ async function main() {
   });
 
   function makeGuard({ settings, foreground, found = null, browser = { id: 'chrome', name: 'Google Chrome', family: 'chromium' } }) {
-    const cover = { shown: null, shows: 0, show(site) { this.shown = site; this.shows += 1; }, hide() { this.shown = null; } };
+    const cover = {
+      shown: null, shows: 0, rect: null, moves: [],
+      show(target, rect) { this.shown = target; this.shows += 1; this.rect = rect; },
+      move(rect) { this.moves.push(rect); this.rect = rect; },
+      hide() { this.shown = null; },
+    };
     const lookups = [];
     const guard = new FocusGuard({
-      store: { settings },
+      store: { settings, focusSession: null },
       cover,
       readWindow: () => foreground.current,
-      identifyApp: (fg) => ({ browser: fg.exePath.includes('chrome') ? browser : null }),
+      identifyApp: (fg) => ({ name: fg.exePath.replace(/.*[\\/]/, ''), browser: fg.exePath.includes('chrome') ? browser : null }),
       lookup: async (b, title, options) => { lookups.push({ title, options }); return found.current; },
+      placeCover: (win) => ({ rect: win.bounds || null, fallback: !win.bounds }),
+      // A real ticker would race the scenarios; trackTick drives it instead.
+      trackInterval: 60 * 60 * 1000,
       selfPid: 1,
+      platform: 'win32',
     });
     return { guard, cover, lookups };
   }
@@ -355,7 +367,10 @@ async function main() {
     const found = { current: { domain: 'old.reddit.com', match: 100, visitedAt: clock - 3600000 } };
     const { guard, cover, lookups } = makeGuard({ settings, foreground, found });
     await guard.check();
-    assert.equal(cover.shown, 'reddit.com');
+    assert.equal(cover.shown.label, 'reddit.com');
+    assert.equal(cover.shown.kind, 'site');
+    assert.equal(cover.shown.mode, 'block');
+    assert.equal(cover.shown.goal, null, 'no session means no goal on the cover');
     assert.equal(lookups[0].title, 'r/all');
     assert.equal(lookups[0].options.negativeMs, 10000);
     found.current = { domain: 'github.com', visitedAt: clock };
@@ -363,7 +378,7 @@ async function main() {
     assert.equal(cover.shown, null);
     found.current = { domain: 'reddit.com', visitedAt: clock };
     await guard.check();
-    assert.equal(cover.shown, 'reddit.com');
+    assert.equal(cover.shown.label, 'reddit.com');
     foreground.current = { pid: 8, exePath: 'C:\\code.exe', title: 'main.go' };
     await guard.check();
     assert.equal(cover.shown, null, 'a non-browser app lifts the cover');
@@ -374,18 +389,18 @@ async function main() {
     const foreground = { current: { pid: 7, exePath: 'chrome', title: 'reddit.com' } };
     const { guard, cover } = makeGuard({ settings, foreground, found: { current: null } });
     await guard.check();
-    assert.equal(cover.shown, 'reddit.com', 'an address in the title is enough');
+    assert.equal(cover.shown.label, 'reddit.com', 'an address in the title is enough');
     cover.focused = true;
     cover.isFocused = function () { return this.focused; };
     foreground.current = { pid: 1, exePath: 'screen-time', title: 'Focus lockdown' };
     await guard.check();
-    assert.equal(cover.shown, 'reddit.com', 'the cover itself was clicked');
+    assert.equal(cover.shown.label, 'reddit.com', 'the cover itself was clicked');
     cover.focused = false;
     await guard.check();
     assert.equal(cover.shown, null, 'the main window is in front');
     foreground.current = { pid: 7, exePath: 'chrome', title: 'reddit.com' };
     await guard.check();
-    assert.equal(cover.shown, 'reddit.com', 'back to the blocked page');
+    assert.equal(cover.shown.label, 'reddit.com', 'back to the blocked page');
   });
 
   await scenario('a loose title match to an old visit does not cover the page', async () => {
@@ -394,10 +409,12 @@ async function main() {
     const found = { current: { domain: 'reddit.com', match: 45, visitedAt: clock - 3 * 3600000 } };
     const { guard, cover } = makeGuard({ settings, foreground, found });
     await guard.check();
+    clock += 4000;
+    await guard.check();
     assert.equal(cover.shown, null);
     found.current.match = 100;
     await guard.check();
-    assert.equal(cover.shown, 'reddit.com', 'an exact title match still counts, however old');
+    assert.equal(cover.shown.label, 'reddit.com', 'an exact title match still counts, however old');
   });
 
   await scenario('lockdown off or an empty list covers nothing', async () => {
@@ -428,7 +445,7 @@ async function main() {
     assert.equal(cover.shown, null);
     found.current.visitedAt = clock - 5000;
     await guard.check();
-    assert.equal(cover.shown, 'reddit.com');
+    assert.equal(cover.shown.label, 'reddit.com');
   });
 
   console.log(results.join('\n'));

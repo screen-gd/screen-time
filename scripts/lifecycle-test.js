@@ -40,11 +40,17 @@ async function check(hidden, backend = false) {
   });
   let totalSeconds = 7200;
   const store = {
-    settings: { paused: false },
+    settings: { paused: false, focusLockdown: false, blockedSites: [], focusBlockApps: [] },
+    focusSession: null,
     load() { return this; },
     pendingRecords: Promise.resolve(),
     connect() { return this; },
     sendTracking() {},
+    async refreshSettings() { return this.settings; },
+    async refreshFocus() { return this.focusSession; },
+    async startFocus() { return { ok: true, session: null }; },
+    async endFocus() { return { ok: true, session: null }; },
+    async catalog() { return { apps: [], sites: [] }; },
     async range() { return this.aggregate(); },
     aggregate: () => ({ totalSeconds, apps: [1, 2, 3, 4].map(n => ({ name: `App ${n}`, seconds: 600 * n })) }),
     updateSettings(patch) { return Object.assign(this.settings, patch); },
@@ -73,17 +79,20 @@ async function check(hidden, backend = false) {
     './tracker/browsers': {},
     './backend-client': {
       BackendStore: class { constructor() { return store; } },
-      async startBackend() { if (!backend) throw Error('Local store test'); return { baseUrl: 'http://localhost', process: {} }; },
+      async startBackend() { if (!backend) throw Error('Local store test'); return { baseUrl: 'http://localhost', token: 't', process: {} }; },
       async stopBackend(child) { if (!child) return; await new Promise(resolve => setImmediate(resolve)); backendStopped = true; },
+      backendBinary: () => null,
     },
+    './connection-file': { connectionPath: () => 'x', writeConnection() {}, removeConnection() {} },
     './updater': { Updater: class { constructor() { this.state = {}; } } },
     './focus': { FocusGuard: class { sync() {} stop() {} } },
-    './focus-cover': { FocusCover: class { hide() {} destroy() {} owns() { return false; } } },
+    './focus-cover': { FocusCover: class { hide() {} destroy() {} move() {} owns() { return false; } } },
+    './cover-bounds': { coverRect: () => ({ rect: null, fallback: true }) },
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8'), {
     require: name => mocks[name] || require(name),
     __dirname: path.join(__dirname, '../electron'),
-    process: { env: {}, argv: hidden ? ['--hidden'] : [], platform: 'win32', execPath: 'electron' },
+    process: { env: {}, argv: hidden ? ['--hidden'] : [], platform: 'win32', execPath: 'electron', on() {} },
     setTimeout, setInterval: () => ({ unref() {} }), clearInterval() {}, console,
   });
   await new Promise(resolve => setImmediate(resolve));

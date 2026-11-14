@@ -815,12 +815,51 @@ button.trow:hover .chev { stroke: var(--text); }
 .suggest { display: flex; flex-wrap: wrap; gap: 8px; padding: 6px 0 10px; }
 .suggest .btn { height: 28px; padding: 0 10px; font-size: 12px; }
 
-/* the full-screen cover shown over a blocked site (focus.html) */
-body.cover { display: grid; place-items: center; padding: 24px; }
-.cover-card { display: flex; flex-direction: column; align-items: center; gap: 10px; max-width: 440px; padding: 36px 40px 32px; text-align: center; }
-.cover-card h1 { margin: 10px 0 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
-.cover-site { margin: 0; font-size: 14px; color: var(--accent); }
-.cover-why { margin: 4px 0 14px; font-size: 13px; line-height: 1.55; color: var(--muted); }
+.session-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 0 4px; }
+.session-form .text-input { flex: 1 1 200px; height: 34px; }
+.focus-list { padding: 8px 0 2px; }
+.focus-list-t { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0 2px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 26px; padding: 0 10px; border-radius: 7px;
+  background: var(--well); box-shadow: var(--sunken);
+  font-size: 12px; color: var(--muted);
+}
+.chip .tile { width: 16px; height: 16px; border-radius: 4px; }
+.focus-goal { margin: 4px 0 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+.focus-time { margin: 8px 0 2px; font-size: 44px; font-weight: 300; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.focus-chips-t { margin-top: 16px; }
+.focus-actions { padding: 14px 0 4px; }
+.snippet {
+  margin: 10px 0; padding: 12px 14px; border-radius: 10px;
+  background: var(--well); box-shadow: var(--sunken);
+  font-size: 11.5px; line-height: 1.5; color: var(--muted);
+  white-space: pre; overflow-x: auto;
+}
+
+/* the window-sized cover shown over a blocked window (focus.html) */
+body.cover { display: grid; place-items: center; padding: clamp(8px, 4vmin, 24px); overflow: hidden; }
+.cover-card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: clamp(6px, 1.8vmin, 12px); width: 100%; max-width: min(440px, 100%); max-height: 100%; padding: clamp(12px, 5vmin, 36px) clamp(14px, 6vmin, 40px); text-align: center; overflow: hidden; }
+.cover-card h1 { margin: clamp(4px, 1.5vmin, 10px) 0 0; font-size: clamp(15px, 4vmin, 22px); font-weight: 600; letter-spacing: -0.02em; max-width: 100%; overflow-wrap: anywhere; }
+.cover-site { margin: 0; font-size: clamp(12px, 2.6vmin, 14px); color: var(--accent); max-width: 100%; overflow-wrap: anywhere; }
+.cover-why { margin: 4px 0 10px; font-size: clamp(11px, 2.4vmin, 13px); line-height: 1.55; color: var(--muted); max-width: 100%; }
+.cover-left { margin: 0 0 14px; font-size: clamp(10px, 2.2vmin, 12px); color: var(--quiet); }
+
+/* a narrow or short blocked window leaves no room for the tile and hint */
+@media (max-height: 420px), (max-width: 380px) {
+  .cover-card .tile { display: none; }
+  .cover-card .cover-why { display: none; }
+  .cover-card h1 { margin-top: 0; }
+}
+
+/* a sliver keeps only the goal, the reason and the time left, tightly packed */
+@media (max-height: 220px) {
+  body.cover { padding: 4px; }
+  .cover-card { gap: 4px; padding: 8px 12px; }
+  .cover-card .btn { display: none; }
+  .cover-card .cover-why, .cover-card .cover-left { margin: 0; }
+}
 
 /* ---------- narrower windows ---------- */
 

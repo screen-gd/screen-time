@@ -32,6 +32,11 @@ type Settings struct {
 	Browsers            []string `json:"browsers"`
 	FocusLockdown       bool     `json:"focusLockdown"`
 	BlockedSites        []string `json:"blockedSites"`
+	FocusMode           string   `json:"focusMode"`
+	FocusAllowApps      []string `json:"focusAllowApps"`
+	FocusAllowSites     []string `json:"focusAllowSites"`
+	FocusBlockApps      []string `json:"focusBlockApps"`
+	FocusMinutes        int      `json:"focusMinutes"`
 }
 
 type App struct {
@@ -70,14 +75,17 @@ type Data struct {
 	CreatedAt string         `json:"createdAt"`
 	Settings  Settings       `json:"settings"`
 	Days      map[string]Day `json:"days"`
+	Focus     FocusData      `json:"focus"`
 }
 
 type Store struct {
-	mu    sync.RWMutex
-	file  string
-	data  Data
-	dirty bool
-	save  *time.Timer
+	mu           sync.RWMutex
+	file         string
+	data         Data
+	dirty        bool
+	save         *time.Timer
+	now          func() time.Time
+	sessionTimer *time.Timer
 }
 
 func defaultSettings() Settings {
@@ -85,7 +93,9 @@ func defaultSettings() Settings {
 	return Settings{
 		SampleSeconds: 5, IdleSeconds: 120, MediaCeilingMinutes: &ceiling,
 		RecordWebsites: true, AutoUpdate: true, Theme: Theme{Preset: "default"},
-		RetentionDays: 90, BlockedSites: []string{},
+		RetentionDays: 90, BlockedSites: []string{}, FocusMode: "allow",
+		FocusAllowApps: []string{}, FocusAllowSites: []string{}, FocusBlockApps: []string{},
+		FocusMinutes: 50,
 	}
 }
 
@@ -94,7 +104,7 @@ func emptyData() Data {
 }
 
 func Open(file string) (*Store, error) {
-	s := &Store{file: file, data: emptyData()}
+	s := &Store{file: file, data: emptyData(), now: time.Now}
 	if raw, err := os.ReadFile(file); err == nil {
 		var parsed Data
 		if json.Unmarshal(raw, &parsed) == nil {
@@ -113,6 +123,9 @@ func Open(file string) (*Store, error) {
 				s.data.Days = defaults.Days
 			}
 			s.data.Settings = mergeSettings(s.data.Settings, defaults.Settings, rawSettings)
+			if parsed.Focus.Session != nil || parsed.Focus.RestoreLockdown != nil {
+				s.data.Focus = parsed.Focus
+			}
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
@@ -120,7 +133,12 @@ func Open(file string) (*Store, error) {
 	if s.data.CreatedAt == "" {
 		s.data.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
+	// A session that outlived the process still ends on time, and an expired one
+	// in the file is unwound and its lockdown restored on load. The timer arms
+	// after pruning: a fire during pruning would flush the map mid-write.
+	s.expireLocked()
 	s.pruneLocked(time.Now())
+	s.watchSessionLocked()
 	return s, nil
 }
 
@@ -145,6 +163,15 @@ func normalizeSettings(in, defaults Settings) Settings {
 		in.Browsers = copied
 	}
 	in.BlockedSites = normalizeSiteList(in.BlockedSites)
+	if in.FocusMode != "allow" && in.FocusMode != "block" {
+		in.FocusMode = defaults.FocusMode
+	}
+	in.FocusAllowApps = normalizeAppList(in.FocusAllowApps)
+	in.FocusAllowSites = normalizeSiteList(in.FocusAllowSites)
+	in.FocusBlockApps = normalizeAppList(in.FocusBlockApps)
+	if in.FocusMinutes != 15 && in.FocusMinutes != 25 && in.FocusMinutes != 50 && in.FocusMinutes != 90 && in.FocusMinutes != 120 && in.FocusMinutes != 180 {
+		in.FocusMinutes = defaults.FocusMinutes
+	}
 	return in
 }
 
@@ -164,19 +191,43 @@ func mergeSettings(in, defaults Settings, raw map[string]json.RawMessage) Settin
 	if _, ok := raw["browsers"]; !ok {
 		in.Browsers = defaults.Browsers
 	}
+	if _, ok := raw["focusMode"]; !ok {
+		in.FocusMode = defaults.FocusMode
+	}
+	if _, ok := raw["focusAllowApps"]; !ok {
+		in.FocusAllowApps = defaults.FocusAllowApps
+	}
+	if _, ok := raw["focusAllowSites"]; !ok {
+		in.FocusAllowSites = defaults.FocusAllowSites
+	}
+	if _, ok := raw["focusBlockApps"]; !ok {
+		in.FocusBlockApps = defaults.FocusBlockApps
+	}
+	if _, ok := raw["focusMinutes"]; !ok {
+		in.FocusMinutes = defaults.FocusMinutes
+	}
 	return normalizeSettings(in, defaults)
 }
 
 func dateKey(t time.Time) string { return t.Local().Format("2006-01-02") }
 func dayFor(t time.Time) Day     { return Day{Apps: map[string]App{}, Sites: map[string]Site{}} }
 
-func (s *Store) File() string       { return s.file }
-func (s *Store) Settings() Settings { s.mu.RLock(); defer s.mu.RUnlock(); return s.data.Settings }
-func (s *Store) CreatedAt() string  { s.mu.RLock(); defer s.mu.RUnlock(); return s.data.CreatedAt }
+func (s *Store) File() string      { return s.file }
+func (s *Store) CreatedAt() string { s.mu.RLock(); defer s.mu.RUnlock(); return s.data.CreatedAt }
+
+// Settings reports the settings, unwinding an expired session (and its lockdown
+// restore) first so no caller ever sees a stale one.
+func (s *Store) Settings() Settings {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.expireLocked()
+	return s.data.Settings
+}
 
 func (s *Store) UpdateSettings(patch map[string]any) Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.expireLocked()
 	next := s.data.Settings
 	if value, ok := patch["sampleSeconds"]; ok {
 		next.SampleSeconds = asInt(value, next.SampleSeconds)
@@ -221,12 +272,22 @@ func (s *Store) UpdateSettings(patch map[string]any) Settings {
 		next.FocusLockdown = asBool(value, next.FocusLockdown)
 	}
 	if value, ok := patch["blockedSites"]; ok {
-		next.BlockedSites = nil
-		if list, ok := value.([]any); ok {
-			for _, item := range list {
-				next.BlockedSites = append(next.BlockedSites, asString(item, ""))
-			}
-		}
+		next.BlockedSites = asStringList(value)
+	}
+	if value, ok := patch["focusMode"]; ok {
+		next.FocusMode = asString(value, next.FocusMode)
+	}
+	if value, ok := patch["focusAllowApps"]; ok {
+		next.FocusAllowApps = asStringList(value)
+	}
+	if value, ok := patch["focusAllowSites"]; ok {
+		next.FocusAllowSites = asStringList(value)
+	}
+	if value, ok := patch["focusBlockApps"]; ok {
+		next.FocusBlockApps = asStringList(value)
+	}
+	if value, ok := patch["focusMinutes"]; ok {
+		next.FocusMinutes = asInt(value, next.FocusMinutes)
 	}
 	if value, ok := patch["theme"].(map[string]any); ok {
 		next.Theme.Preset = asString(value["preset"], next.Theme.Preset)
@@ -265,6 +326,20 @@ func asString(value any, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// asStringList accepts both JSON-decoded []any values and []string patches.
+func asStringList(value any) []string {
+	var out []string
+	switch list := value.(type) {
+	case []any:
+		for _, item := range list {
+			out = append(out, asString(item, ""))
+		}
+	case []string:
+		out = append(out, list...)
+	}
+	return out
 }
 
 func (s *Store) Record(appKey, appName, title, browser string, site *RecordSite, seconds float64, at time.Time) {

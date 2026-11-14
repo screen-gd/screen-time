@@ -124,7 +124,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if origin := r.Header.Get("Origin"); origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, "+TokenHeader)
 		}
 		if r.Method == http.MethodOptions {
@@ -240,6 +240,78 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case path == "/api/v1/tracking" && r.Method == http.MethodGet:
 		s.write(w, http.StatusOK, s.trackingStatus())
+	case path == "/api/v1/focus/session" && r.Method == http.MethodGet:
+		s.write(w, http.StatusOK, map[string]any{"session": s.store.Focus().Session})
+	case path == "/api/v1/focus/session" && r.Method == http.MethodPost:
+		var input store.SessionInput
+		if !s.decode(w, r, &input) {
+			return
+		}
+		session, conflict, err := s.store.StartSession(input)
+		if err != nil {
+			s.write(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		if conflict != nil {
+			s.write(w, http.StatusConflict, map[string]any{"session": conflict})
+			return
+		}
+		s.write(w, http.StatusCreated, map[string]any{"session": session})
+	case path == "/api/v1/focus/session" && r.Method == http.MethodDelete:
+		_, conflict, err := s.store.EndSession(r.URL.Query().Get("source"))
+		if err != nil {
+			s.write(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		if conflict != nil {
+			s.write(w, http.StatusConflict, map[string]any{"session": conflict})
+			return
+		}
+		s.write(w, http.StatusOK, map[string]any{"session": nil})
+	case path == "/api/v1/focus/catalog" && r.Method == http.MethodGet:
+		days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+		if days != 1 && days != 7 && days != 30 {
+			days = 30
+		}
+		s.write(w, http.StatusOK, s.store.Catalog(days, time.Now()))
+	case path == "/api/v1/focus/lists" && r.Method == http.MethodGet:
+		s.write(w, http.StatusOK, focusLists(s.store.Settings()))
+	case path == "/api/v1/focus/lists" && r.Method == http.MethodPatch:
+		var patch struct {
+			Mode  *string `json:"mode"`
+			Allow *struct {
+				Apps  *[]string `json:"apps"`
+				Sites *[]string `json:"sites"`
+			} `json:"allow"`
+			Block *struct {
+				Apps  *[]string `json:"apps"`
+				Sites *[]string `json:"sites"`
+			} `json:"block"`
+		}
+		if !s.decode(w, r, &patch) {
+			return
+		}
+		settings := map[string]any{}
+		if patch.Mode != nil {
+			settings["focusMode"] = *patch.Mode
+		}
+		if patch.Allow != nil {
+			if patch.Allow.Apps != nil {
+				settings["focusAllowApps"] = *patch.Allow.Apps
+			}
+			if patch.Allow.Sites != nil {
+				settings["focusAllowSites"] = *patch.Allow.Sites
+			}
+		}
+		if patch.Block != nil {
+			if patch.Block.Apps != nil {
+				settings["focusBlockApps"] = *patch.Block.Apps
+			}
+			if patch.Block.Sites != nil {
+				settings["blockedSites"] = *patch.Block.Sites
+			}
+		}
+		s.write(w, http.StatusOK, focusLists(s.store.UpdateSettings(settings)))
 	case path == "/api/v1/browsers" && r.Method == http.MethodGet:
 		s.write(w, http.StatusOK, []any{})
 	default:
@@ -258,7 +330,17 @@ func (s *Server) snapshot() map[string]any {
 	tracking["sampling"] = settings.SampleSeconds
 	return map[string]any{
 		"now": time.Now().UTC().Format(time.RFC3339Nano), "todayKey": time.Now().Format("2006-01-02"), "today": today, "yesterday": s.store.Aggregate(1, time.Now().AddDate(0, 0, -1)), "ranges": map[string]any{"1": today, "7": week, "30": month}, "settings": settings, "tracking": tracking,
+		"focus": map[string]any{"session": s.store.Focus().Session},
 		"system": map[string]any{"platform": runtime.GOOS, "arch": runtime.GOARCH, "version": "go-backend", "dataPath": s.store.File(), "browserList": []any{}, "supported": tracking["supported"], "permissions": map[string]any{"accessibility": nil}, "startedAt": s.store.CreatedAt(), "update": map[string]any{"supported": false, "enabled": false, "status": "idle"}, "storedDays": days, "oldestDay": nullable(oldest), "fileSize": size},
+	}
+}
+
+// focusLists maps the saved list settings to the /api/v1/focus/lists shape.
+func focusLists(settings store.Settings) map[string]any {
+	return map[string]any{
+		"mode":  settings.FocusMode,
+		"allow": map[string]any{"apps": settings.FocusAllowApps, "sites": settings.FocusAllowSites},
+		"block": map[string]any{"apps": settings.FocusBlockApps, "sites": settings.BlockedSites},
 	}
 }
 

@@ -15,6 +15,7 @@ function loadNative() {
     const user32 = koffi.load('user32.dll');
     const kernel32 = koffi.load('kernel32.dll');
     const shell32 = koffi.load('shell32.dll');
+    const dwmapi = koffi.load('dwmapi.dll');
     native = {
       GetForegroundWindow: user32.func('void *GetForegroundWindow()'),
       GetWindowTextW: user32.func('int GetWindowTextW(void *hWnd, uint16_t *lpString, int nMaxCount)'),
@@ -23,6 +24,8 @@ function loadNative() {
       QueryFullProcessImageNameW: kernel32.func('bool QueryFullProcessImageNameW(void *h, uint32_t flags, uint16_t *buf, _Inout_ uint32_t *size)'),
       GetApplicationUserModelId: kernel32.func('int32_t GetApplicationUserModelId(void *h, _Inout_ uint32_t *size, uint16_t *buf)'),
       CloseHandle: kernel32.func('bool CloseHandle(void *h)'),
+      GetWindowRect: user32.func('bool GetWindowRect(void *hwnd, _Out_ void *rect)'),
+      DwmGetWindowAttribute: dwmapi.func('int32_t DwmGetWindowAttribute(void *hwnd, uint32_t attr, _Out_ void *rect, uint32_t size)'),
       GetLastInputInfo: user32.func('bool GetLastInputInfo(_Inout_ void *plii)'),
       GetTickCount64: kernel32.func('uint64_t GetTickCount64()'),
       SHQueryUserNotificationState: shell32.func('int32_t SHQueryUserNotificationState(_Out_ int *state)'),
@@ -75,6 +78,26 @@ function identityOf(api, pid) {
   return record;
 }
 
+const rectBuffer = Buffer.alloc(16);
+
+// The visible frame in physical pixels. DWM's extended frame bounds exclude
+// the invisible resize borders GetWindowRect reports; fall back to it when
+// the attribute read fails. Electron is per-monitor DPI aware, so both are
+// already in the units screen.getAllDisplays uses.
+function boundsOf(api, hwnd) {
+  try {
+    if (api.DwmGetWindowAttribute(hwnd, 9 /* DWMWA_EXTENDED_FRAME_BOUNDS */, rectBuffer, 16) !== 0
+      && !api.GetWindowRect(hwnd, rectBuffer)) {
+      return null;
+    }
+    const x = rectBuffer.readInt32LE(0);
+    const y = rectBuffer.readInt32LE(4);
+    return { x, y, width: rectBuffer.readInt32LE(8) - x, height: rectBuffer.readInt32LE(12) - y, unit: 'physical' };
+  } catch {
+    return null;
+  }
+}
+
 function readForeground() {
   try {
     const api = loadNative();
@@ -98,7 +121,7 @@ function readForeground() {
       idleMs = (now - last) >>> 0;
     }
 
-    return { title, pid, exePath: identity.exePath, aumid: identity.aumid, bundleId: '', name: '', idleMs };
+    return { title, pid, exePath: identity.exePath, aumid: identity.aumid, bundleId: '', name: '', idleMs, bounds: boundsOf(api, hwnd) };
   } catch (error) {
     return { error: error.message };
   }

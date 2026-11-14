@@ -21,8 +21,15 @@
     enter: true,
     loadError: false,
     diagOpen: false,
-    focusDraft: '',
+    focusGoal: '',
+    focusDrafts: {},
+    focusErrors: {},
     focusError: null,
+    focusConflict: null,
+    focusCatalog: null,
+    focusStarting: false,
+    focusPending: {},
+    allowSitesDraft: [],
   };
 
   const view = document.getElementById('view');
@@ -739,9 +746,9 @@
           h('span', { class: 'num', text: durationText(piece.seconds) })))));
   }
 
-  /* ---------- focus lockdown ---------- */
+  /* ---------- focus ---------- */
 
-  // Same rules as electron/blocklist.js, so the field can say no before saving.
+  // Same rules as electron/blocklist.js normalizeSite, so the field can say no before saving.
   const SITE_HOST = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
   function normalizeSite(value) {
     const text = String(value || '').trim().toLowerCase()
@@ -752,108 +759,396 @@
       .replace(/^\*\./, '')
       .replace(/^www\./, '')
       .replace(/\.$/, '');
-    return SITE_HOST.test(text) ? text : null;
+    return text === 'localhost' || SITE_HOST.test(text) ? text : null;
   }
+
+  // Same rules as electron/blocklist.js normalizeApp.
+  function normalizeApp(value) {
+    const text = String(value || '').trim().toLowerCase()
+      .split(/[\\/]/).pop()
+      .replace(/\.(exe|app)$/, '')
+      .replace(/\s+/g, ' ');
+    return text.length >= 1 && text.length <= 128 ? text : null;
+  }
+
+  // Suggestions never offer the app itself: listing it would cover its own window.
+  const FOCUS_SELF_IDS = new Set(['screen-time', 'tally', 'electron']);
+  const FOCUS_LENGTHS = [[15, '15m'], [25, '25m'], [50, '50m'], [90, '90m'], [120, '2h'], [180, '3h']];
+  const DOCS_FOCUS = 'https://github.com/screen-gd/screen-time/blob/main/docs/focus.md';
 
   function blockedSites(settings) {
     return Array.isArray(settings.blockedSites) ? settings.blockedSites : [];
   }
 
-  async function addBlockedSite(value) {
-    const site = normalizeSite(value);
-    if (!site) {
-      state.focusError = 'Enter a site address, like reddit.com.';
+  function capitalize(text) {
+    const value = String(text || '');
+    return value ? value[0].toUpperCase() + value.slice(1) : value;
+  }
+
+  // mm:ss, or h:mm:ss past an hour.
+  function remainingText(ms) {
+    const total = Math.max(0, Math.ceil(ms / 1000));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const seconds = total % 60;
+    const mm = String(minutes).padStart(2, '0');
+    const ss = String(seconds).padStart(2, '0');
+    return hours ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
+  }
+
+  let catalogAt = 0;
+  // The 30-day usage merge behind the suggestion chips; loaded lazily so the
+  // page does not wait on it.
+  async function loadCatalog() {
+    if (typeof api.focusCatalog !== 'function' || Date.now() - catalogAt < 30000) return;
+    catalogAt = Date.now();
+    try {
+      state.focusCatalog = await api.focusCatalog(30);
+      const active = document.activeElement;
+      const editing = state.route === 'focus' && active && view.contains(active) && /^(SELECT|INPUT)$/.test(active.tagName);
+      if (state.route === 'focus' && !editing) render();
+    } catch {
+      // suggestions are optional; the next refresh tries again
+    }
+  }
+
+  // An app id shows the name the catalog knows it by.
+  function appLabel(id) {
+    const apps = (state.focusCatalog && state.focusCatalog.apps) || [];
+    const row = apps.find((app) => app.id === id);
+    return (row && row.name) || id;
+  }
+
+  // One editable list (apps or sites): add field, rows with Remove, suggestion
+  // chips. `current` reads the list's latest value at click time; a change goes
+  // to onSave and a second change while that save is pending is ignored.
+  function focusEditor({ key, title, isApp, items, current, placeholder, onSave, suggestions, hint }) {
+    const labelOf = (item) => (isApp ? appLabel(item) : item);
+    const list = current || (() => items);
+    const save = async (next) => {
+      if (state.focusPending[key]) return;
+      state.focusPending[key] = true;
+      try {
+        await onSave(next);
+      } finally {
+        state.focusPending[key] = false;
+      }
+    };
+    const add = async (raw) => {
+      const value = isApp ? normalizeApp(raw) : normalizeSite(raw);
+      if (!value) {
+        state.focusErrors[key] = isApp ? 'Enter an app name or path, like code.exe.' : 'Enter a site address, like reddit.com.';
+        render();
+        return;
+      }
+      state.focusErrors[key] = null;
+      state.focusDrafts[key] = '';
+      const items = list();
+      if (!items.includes(value)) await save([...items, value]);
+      else render();
+      const input = document.getElementById(`focus-${key}-input`);
+      if (input) input.focus();
+    };
+    return h('div', { class: 'focus-list' },
+      h('div', { class: 'focus-list-t', text: title }),
+      h('form', {
+        class: 'add-site',
+        onsubmit: (event) => {
+          event.preventDefault();
+          add(event.target.elements.entry.value);
+        },
+      },
+      h('input', {
+        class: 'text-input', id: `focus-${key}-input`, name: 'entry', type: 'text',
+        autocomplete: 'off', spellcheck: 'false', placeholder, 'aria-label': title,
+        value: state.focusDrafts[key] || '',
+        oninput: (event) => { state.focusDrafts[key] = event.target.value; },
+      }),
+      h('button', { class: 'btn', type: 'submit' }, 'Add')),
+      state.focusErrors[key] ? h('p', { class: 'field-error', role: 'alert', text: state.focusErrors[key] }) : null,
+      items.length
+        ? h('div', { class: 'blocked' }, items.map((item) => h('div', { class: 'blocked-row' },
+          isApp ? appGlyph(labelOf(item)) : siteGlyph(item),
+          h('span', { class: 'bn', text: labelOf(item), title: item }),
+          h('button', {
+            class: 'link-btn',
+            type: 'button',
+            'aria-label': `Remove ${labelOf(item)}`,
+            onclick: () => save(list().filter((entry) => entry !== item)),
+          }, 'Remove'))))
+        : h('p', { class: 'note', text: 'Nothing listed yet.' }),
+      suggestions.length
+        ? h('div', { class: 'suggest' }, suggestions.map((item) => h('button', {
+          class: 'btn',
+          type: 'button',
+          onclick: () => add(item),
+        }, `+ ${labelOf(item)}`)))
+        : null,
+      hint ? h('p', { class: 'field-hint', text: hint }) : null);
+  }
+
+  // The top suggestions for the current mode's lists, from the 30-day catalog.
+  function focusSuggestions(mode, settings) {
+    const catalog = state.focusCatalog || { apps: [], sites: [] };
+    const appList = mode === 'allow' ? (settings.focusAllowApps || []) : (settings.focusBlockApps || []);
+    const siteList = mode === 'allow' ? (settings.focusAllowSites || []) : blockedSites(settings);
+    const apps = (catalog.apps || [])
+      // Allow mode leaves browsers out: a browser opens only listed sites anyway.
+      .filter((row) => row.id && !FOCUS_SELF_IDS.has(row.id) && !appList.includes(row.id)
+        && !(mode === 'allow' && row.browser))
+      .slice(0, 8)
+      .map((row) => row.id);
+    const sites = (catalog.sites || [])
+      .filter((row) => !siteList.some((entry) => row.domain === entry || row.domain.endsWith(`.${entry}`)))
+      .slice(0, 8)
+      .map((row) => row.domain);
+    return { apps, sites };
+  }
+
+  // Starts the session the form describes. focusStarting blocks a second
+  // submit while the first call is in flight.
+  async function startSession() {
+    if (state.focusStarting) return;
+    const settings = state.snapshot.settings;
+    const goal = String(state.focusGoal || '').trim();
+    if (!goal) {
+      state.focusError = 'Name what you are working on.';
       render();
       return;
     }
     state.focusError = null;
-    state.focusDraft = '';
-    const list = blockedSites(state.snapshot.settings);
-    if (list.includes(site)) render();
-    else await saveSettings({ blockedSites: [...list, site] });
-    const input = document.getElementById('focus-input');
-    if (input) input.focus();
+    state.focusConflict = null;
+    state.focusStarting = true;
+    render();
+    try {
+      const minutes = FOCUS_LENGTHS.some(([value]) => value === Number(settings.focusMinutes)) ? Number(settings.focusMinutes) : 50;
+      // Omitted app/site lists fall back to the saved lists for the mode.
+      let result;
+      try {
+        result = await api.startFocus({
+          goal,
+          durationSeconds: minutes * 60,
+          mode: settings.focusMode === 'block' ? 'block' : 'allow',
+          allowSites: state.allowSitesDraft.length ? state.allowSitesDraft : undefined,
+        });
+      } catch {
+        state.focusError = 'Could not reach screen-time’s backend. Try again.';
+        return;
+      }
+      if (result && result.ok) {
+        state.focusGoal = '';
+        state.allowSitesDraft = [];
+        await refresh();
+        return;
+      }
+      if (result && result.status === 409) {
+        state.focusConflict = result.session;
+        return;
+      }
+      state.focusError = (result && result.error) || 'Could not start the session.';
+    } finally {
+      state.focusStarting = false;
+      render();
+    }
+  }
+
+  // Ends the running session and reports whether it did; a failed end keeps
+  // the running view and says why.
+  async function endSession() {
+    let result;
+    try {
+      result = await api.endFocus();
+    } catch {
+      state.focusError = 'Could not reach screen-time’s backend. Try again.';
+      render();
+      return false;
+    }
+    if (!result || !result.ok) {
+      state.focusError = (result && result.error) || 'Could not end the session. Try again.';
+      render();
+      return false;
+    }
+    state.focusError = null;
+    state.focusConflict = null;
+    await refresh();
+    return true;
+  }
+
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {});
+      return;
+    }
+    const area = document.createElement('textarea');
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    document.execCommand('copy');
+    area.remove();
+  }
+
+  function focusRunning(session) {
+    const modeLabel = session.mode === 'block' ? 'Block list' : 'Allow list';
+    const details = [`Ends at ${timeOf(session.endsAt) || '—'}`, modeLabel];
+    if (session.source && session.source !== 'screen-time') details.push(`Started by ${session.source}`);
+
+    const chipGroup = (title, items, isApp) => (items || []).length
+      ? [
+        h('div', { class: 'row-d focus-chips-t', text: title }),
+        h('div', { class: 'chips' }, items.map((item) => h('span', { class: 'chip' },
+          isApp ? appGlyph(appLabel(item)) : siteGlyph(item),
+          h('span', { text: isApp ? appLabel(item) : item })))),
+      ]
+      : null;
+
+    return h('section', { class: 'group slab' },
+      h('h2', { class: 'focus-goal', text: session.goal }),
+      h('div', {
+        class: 'focus-time num',
+        id: 'focus-remaining',
+        dataset: { ends: session.endsAt },
+        text: remainingText(Date.parse(session.endsAt) - Date.now()),
+      }),
+      h('div', { class: 'row-d', text: details.join(' · ') }),
+      chipGroup('Apps', session.apps, true),
+      chipGroup('Websites', session.sites, false),
+      chipGroup('Always open', session.allowSites, false),
+      h('div', { class: 'focus-actions' },
+        h('button', { class: 'btn', type: 'button', onclick: endSession }, 'End session')),
+      state.focusError ? h('p', { class: 'field-error', role: 'alert', text: state.focusError }) : null);
+  }
+
+  function focusSetup(snap) {
+    const settings = snap.settings;
+    const mode = settings.focusMode === 'block' ? 'block' : 'allow';
+    const apps = mode === 'allow' ? (settings.focusAllowApps || []) : (settings.focusBlockApps || []);
+    const sites = mode === 'allow' ? (settings.focusAllowSites || []) : blockedSites(settings);
+    const appsKey = mode === 'allow' ? 'focusAllowApps' : 'focusBlockApps';
+    const sitesKey = mode === 'allow' ? 'focusAllowSites' : 'blockedSites';
+    const suggestions = focusSuggestions(mode, settings);
+    const minutes = FOCUS_LENGTHS.some(([value]) => value === Number(settings.focusMinutes)) ? Number(settings.focusMinutes) : 50;
+
+    const start = h('section', { class: 'group slab' },
+      groupHead('New session'),
+      h('form', {
+        class: 'session-form',
+        onsubmit: (event) => {
+          event.preventDefault();
+          startSession();
+        },
+      },
+      h('input', {
+        class: 'text-input', id: 'focus-goal', type: 'text', autocomplete: 'off', spellcheck: 'false',
+        placeholder: 'What are you working on?', 'aria-label': 'Session goal',
+        value: state.focusGoal || '',
+        oninput: (event) => { state.focusGoal = event.target.value; },
+      }),
+      h('div', { class: 'seg', role: 'group', 'aria-label': 'Mode' },
+        [['allow', 'Allow only these'], ['block', 'Block these']].map(([value, label]) => h('button', {
+          type: 'button',
+          class: mode === value ? 'on' : null,
+          'aria-pressed': String(mode === value),
+          onclick: () => saveSettings({ focusMode: value }),
+        }, label))),
+      h('div', { class: 'seg', role: 'group', 'aria-label': 'Length' },
+        FOCUS_LENGTHS.map(([value, label]) => h('button', {
+          type: 'button',
+          class: minutes === value ? 'on' : null,
+          'aria-pressed': String(minutes === value),
+          onclick: () => saveSettings({ focusMinutes: value }),
+        }, label))),
+      h('button', { class: 'btn', type: 'submit', disabled: state.focusStarting || null }, 'Start')),
+      state.focusError ? h('p', { class: 'field-error', role: 'alert', text: state.focusError }) : null,
+      // A session from an agent blocks a start; ending it is offered inline.
+      state.focusConflict ? h('p', { class: 'field-error', role: 'alert' },
+        `${capitalize(state.focusConflict.source)} is running a session: ${state.focusConflict.goal}. `,
+        h('button', {
+          class: 'link-btn',
+          type: 'button',
+          onclick: async () => {
+            if (await endSession()) await startSession();
+          },
+        }, 'End it')) : null);
+
+    const lists = h('section', { class: 'group slab' },
+      groupHead(mode === 'allow' ? 'Allow list' : 'Block list',
+        plural(apps.length + sites.length, 'entry', 'entries')),
+      focusEditor({
+        key: 'apps', title: 'Apps', isApp: true, items: apps,
+        current: () => state.snapshot.settings[appsKey] || [],
+        placeholder: 'code.exe or Visual Studio Code',
+        onSave: (list) => saveSettings({ [appsKey]: list }),
+        suggestions: suggestions.apps,
+      }),
+      focusEditor({
+        key: 'sites', title: 'Websites', isApp: false, items: sites,
+        current: () => state.snapshot.settings[sitesKey] || [],
+        placeholder: 'reddit.com',
+        onSave: (list) => saveSettings({ [sitesKey]: list }),
+        suggestions: suggestions.sites,
+        hint: 'A listed site covers its subdomains: reddit.com also covers old.reddit.com.',
+      }),
+      focusEditor({
+        key: 'open', title: 'Always open during the session', isApp: false,
+        items: state.allowSitesDraft,
+        current: () => state.allowSitesDraft,
+        placeholder: 'music.youtube.com',
+        onSave: async (list) => { state.allowSitesDraft = list; render(); },
+        suggestions: suggestions.sites.filter((site) => !state.allowSitesDraft.includes(site)).slice(0, 4),
+      }),
+      mode === 'allow' ? h('p', { class: 'note', text: 'screen-time, the desktop, the task switcher, the lock screen and Settings stay available; browsers open only the listed sites.' }) : null,
+      mode === 'allow' && !apps.length && !sites.length
+        ? h('p', { class: 'field-error', text: 'The allow lists are empty, so a session would cover everything but those basics.' })
+        : null);
+
+    const blockReady = (settings.focusBlockApps || []).length + blockedSites(settings).length > 0;
+    const between = h('section', { class: 'group slab' },
+      switchRow('Block list between sessions',
+        'Outside a session, the block lists cover what they name. Switch to “Block these” to edit them.',
+        Boolean(settings.focusLockdown), () => saveSettings({ focusLockdown: !settings.focusLockdown })),
+      settings.focusLockdown && !blockReady
+        ? h('p', { class: 'note', text: 'Nothing is blocked until a block list has an entry.' })
+        : null);
+
+    const agent = snap.system && snap.system.agent;
+    const snippet = agent && agent.command
+      ? JSON.stringify({ mcpServers: { 'screen-time': { command: agent.command, args: ['mcp'] } } }, null, 2)
+      : null;
+    const connect = snippet ? h('section', { class: 'group slab' },
+      groupHead('Connect an agent'),
+      h('p', { class: 'note', text: 'An agent on this machine can run focus sessions for you. Paste this into its MCP config.' }),
+      h('pre', { class: 'snippet num', text: snippet }),
+      h('div', { class: 'row-r' },
+        h('button', {
+          class: 'btn',
+          type: 'button',
+          onclick: (event) => {
+            copyText(snippet);
+            event.target.textContent = 'Copied';
+            setTimeout(() => { event.target.textContent = 'Copy'; }, 1600);
+          },
+        }, 'Copy'),
+        h('a', {
+          class: 'link-btn',
+          href: DOCS_FOCUS,
+          target: '_blank',
+          rel: 'noreferrer',
+        }, 'How agents connect ', h('span', { class: 'ext', html: EXTERNAL })))) : null;
+
+    return [start, lists, between, connect];
   }
 
   function renderFocus(snap) {
-    const settings = snap.settings;
-    const list = blockedSites(settings);
-    const on = Boolean(settings.focusLockdown);
-
+    loadCatalog();
+    const session = (snap.focus && snap.focus.session) || null;
     const header = pageHead({
-      title: 'Focus lockdown',
-      right: on && list.length ? [h('span', { class: 'stamp', text: 'On' })] : null,
+      title: 'Focus',
+      right: session ? [h('span', { class: 'stamp', text: 'In session' })] : null,
     });
-
-    const lockdown = h('section', { class: 'group slab' },
-      switchRow('Focus lockdown',
-        list.length
-          ? 'While on, a blocked site in front of you is covered until you close it or switch away.'
-          : 'Add a site to the block list, then turn this on.',
-        on, () => saveSettings({ focusLockdown: !on })),
-      on && !list.length ? h('p', { class: 'note', text: 'Nothing is blocked until the list has a site.' }) : null);
-
-    const form = h('form', {
-      class: 'add-site',
-      onsubmit: (event) => {
-        event.preventDefault();
-        addBlockedSite(event.target.elements.site.value);
-      },
-    },
-    h('input', {
-      class: 'text-input',
-      id: 'focus-input',
-      name: 'site',
-      type: 'text',
-      autocomplete: 'off',
-      spellcheck: 'false',
-      placeholder: 'reddit.com',
-      'aria-label': 'Site to block',
-      value: state.focusDraft || '',
-      oninput: (event) => { state.focusDraft = event.target.value; },
-    }),
-    h('button', { class: 'btn', type: 'submit' }, 'Add'));
-
-    const rows = list.map((site) => h('div', { class: 'blocked-row' },
-      siteGlyph(site),
-      h('span', { class: 'bn', text: site, title: site }),
-      h('button', {
-        class: 'link-btn',
-        type: 'button',
-        'aria-label': `Remove ${site}`,
-        onclick: () => saveSettings({ blockedSites: list.filter((entry) => entry !== site) }),
-      }, 'Remove')));
-
-    // The week's most-visited sites are the likeliest distractions.
-    const week = (snap.ranges && snap.ranges[7]) || snap.today;
-    const suggestions = ((week && week.sites) || [])
-      .map((row) => normalizeSite(row.domain))
-      .filter((site) => site && !list.some((entry) => site === entry || site.endsWith(`.${entry}`)))
-      .slice(0, 6);
-
-    const blockList = h('section', { class: 'group slab' },
-      groupHead('Block list', plural(list.length, 'site', 'sites')),
-      form,
-      state.focusError ? h('p', { class: 'field-error', role: 'alert', text: state.focusError }) : null,
-      rows.length ? h('div', { class: 'blocked' }, rows) : h('p', { class: 'note', text: 'No sites blocked yet.' }),
-      suggestions.length
-        ? [
-          h('div', { class: 'row-d', text: 'Most visited this week' }),
-          h('div', { class: 'suggest' }, suggestions.map((site) => h('button', {
-            class: 'btn',
-            type: 'button',
-            onclick: () => addBlockedSite(site),
-          }, `+ ${site}`))),
-        ]
-        : null,
-      h('p', { class: 'field-hint', text: 'Blocking a site includes its subdomains: reddit.com also covers old.reddit.com. '
-        + 'Sites are recognised from the browser’s window title and its history on this computer, so a page can show for a moment before it is covered. '
-        + (settings.recordWebsites ? '' : 'History is read while lockdown is on, even with website names turned off.') }));
-
     return h('div', { class: 'page-inner' },
       header,
       h('div', { class: 'page-body' },
-        h('div', { class: 'focus' }, lockdown, blockList)));
+        h('div', { class: 'focus' }, session ? focusRunning(session) : focusSetup(snap))));
   }
 
   /* ---------- settings ---------- */
@@ -1357,7 +1652,9 @@
     const rows = (count) => Array.from({ length: count }, () => sk('sk-row'));
     const body = route === 'settings'
       ? [h('div', { style: 'margin-top:32px;max-width:720px' }, rows(8))]
-      : route === 'today'
+      : route === 'focus'
+        ? [sk('sk-figure'), h('div', { style: 'margin-top:32px;max-width:760px' }, rows(9))]
+        : route === 'today'
         ? [sk('sk-figure'), sk('sk-line'), sk('sk-chart'), rows(5)]
         : [sk('sk-figure'), h('div', { style: 'margin-top:32px' }, rows(7))];
     return h('div', { class: 'page-inner', 'aria-hidden': 'true' },
@@ -1393,8 +1690,11 @@
     try {
       const active = document.activeElement;
       const editing = (state.route === 'settings' || state.route === 'focus') && active && view.contains(active) && /^(SELECT|INPUT)$/.test(active.tagName);
+      const sessionId = (snap) => (snap && snap.focus && snap.focus.session ? snap.focus.session.id : null);
+      const before = sessionId(state.snapshot);
       state.snapshot = await api.snapshot();
-      if (!editing) render();
+      // A session starting or ending swaps the whole Focus page, even mid-typing.
+      if (!editing || sessionId(state.snapshot) !== before) render();
       else renderRailState();
     } catch {
       // keep the last good screen rather than flashing an error over it;
@@ -1466,6 +1766,23 @@
     if (!document.hidden) refresh();
   }, 60000);
 
+  // A running session's remaining time updates in place each second; only the
+  // timer text changes, so typing in a field is never disturbed. At zero the
+  // session is over and a refresh swaps in the setup view.
+  setInterval(() => {
+    const node = document.getElementById('focus-remaining');
+    if (!node) return;
+    const ends = Date.parse(node.dataset.ends || '');
+    if (Number.isNaN(ends)) return;
+    const left = ends - Date.now();
+    if (left <= 0) {
+      node.dataset.ends = '';
+      refresh();
+      return;
+    }
+    node.textContent = remainingText(left);
+  }, 1000);
+
   state.route = readRoute();
   render();
   refresh();
@@ -1477,9 +1794,28 @@
     const settings = {
       sampleSeconds: 5, idleSeconds: 120, mediaCeilingMinutes: 120, paused: false,
       recordWebsites: true, launchAtLogin: false, autoUpdate: true, retentionDays: 90, browsers: null,
-      focusLockdown: false, blockedSites: [],
+      focusLockdown: false, blockedSites: ['reddit.com'],
+      focusMode: 'allow', focusAllowApps: ['code', 'notion'], focusAllowSites: ['github.com', 'stackoverflow.com'],
+      focusBlockApps: ['slack'], focusMinutes: 50,
       theme: { preset: 'default', accent: '', ground: '', text: '' },
     };
+    // In-memory session state, mirroring the store rules well enough to preview.
+    const focus = { session: null, restoreLockdown: null };
+
+    function expireFocus() {
+      const session = focus.session;
+      if (!session) return;
+      const ends = Date.parse(session.endsAt);
+      if (!Number.isNaN(ends) && ends > Date.now()) return;
+      if (focus.restoreLockdown !== null && focus.restoreLockdown !== undefined) {
+        settings.focusLockdown = Boolean(focus.restoreLockdown);
+      }
+      focus.session = null;
+      focus.restoreLockdown = null;
+    }
+
+    const normApps = (list) => (Array.isArray(list) ? list.map(normalizeApp).filter(Boolean) : []);
+    const normSites = (list) => (Array.isArray(list) ? list.map(normalizeSite).filter(Boolean) : []);
     const browserList = [
       { id: 'chrome', name: 'Google Chrome', profiles: 1, installed: true },
       { id: 'edge', name: 'Microsoft Edge', profiles: 1, installed: true },
@@ -1494,6 +1830,7 @@
     const demoKey = window.TallyDemo ? window.TallyDemo.keyOf(demoNow) : '';
 
     function snapshot() {
+      expireFocus();
       const today = window.TallyDemo.aggregate(days, 1);
       const yesterdayDate = new Date(demoNow.getFullYear(), demoNow.getMonth(), demoNow.getDate() - 1, 12);
       const yesterday = window.TallyDemo.aggregate({ [window.TallyDemo.keyOf(yesterdayDate)]: days[window.TallyDemo.keyOf(yesterdayDate)] }, 1, yesterdayDate);
@@ -1505,6 +1842,7 @@
         yesterday,
         ranges: { 1: today, 7: window.TallyDemo.aggregate(days, 7), 30: window.TallyDemo.aggregate(days, 30) },
         settings,
+        focus: { session: focus.session },
         tracking: {
           supported: true, lastSampleAt: Date.now(), app: 'Google Chrome', site: 'youtube.com',
           title: 'How a mechanical watch works - YouTube', idleMs: 0, idle: false,
@@ -1512,13 +1850,18 @@
           reason: 'media', error: null, paused: settings.paused, sampling: 5, demo: true,
         },
         system: {
-          platform: 'win32', arch: 'x64', version: '1.2.0',
+          platform: 'win32', arch: 'x64', version: '1.3.0',
           dataPath: 'C:\\Users\\you\\AppData\\Roaming\\Tally\\tally-data.json',
           browserList, supported: true, startedAt: new Date(Date.now() - 30 * 86400000).toISOString(),
           storedDays: keys.length, oldestDay: keys[0] || null, fileSize: JSON.stringify(days).length,
           update: {
             supported: true, enabled: settings.autoUpdate !== false, status: 'current',
             version: null, percent: 0, checkedAt: Date.now() - 42 * 60000, error: null,
+          },
+          agent: {
+            command: 'C:\\Users\\you\\AppData\\Local\\Programs\\screen-time\\resources\\app.asar.unpacked\\backend\\tally-backend.exe',
+            args: ['mcp'],
+            connectionFile: 'C:\\Users\\you\\AppData\\Roaming\\screen-time\\connection.json',
           },
         },
       };
@@ -1530,6 +1873,66 @@
       updateSettings: async (patch) => {
         Object.assign(settings, patch);
         return { settings: { ...settings }, tracking: snapshot().tracking };
+      },
+      startFocus: async (input = {}) => {
+        expireFocus();
+        const source = String(input.source || 'screen-time').trim();
+        if (focus.session && focus.session.source !== source) {
+          return { ok: false, status: 409, session: focus.session };
+        }
+        const goal = String(input.goal || '').trim();
+        if (!goal) return { ok: false, status: 400, error: 'goal is required' };
+        const seconds = Math.round(Number(input.durationSeconds));
+        if (!(seconds >= 60 && seconds <= 43200)) {
+          return { ok: false, status: 400, error: 'durationSeconds must be a number between 60 and 43200' };
+        }
+        const mode = input.mode === 'block' ? 'block' : 'allow';
+        if (!focus.session) focus.restoreLockdown = Boolean(settings.focusLockdown);
+        const started = Date.now();
+        const session = {
+          id: `demo-${started.toString(16)}`,
+          goal,
+          source,
+          mode,
+          apps: input.apps === undefined ? normApps(mode === 'allow' ? settings.focusAllowApps : settings.focusBlockApps) : normApps(input.apps),
+          sites: input.sites === undefined ? normSites(mode === 'allow' ? settings.focusAllowSites : settings.blockedSites) : normSites(input.sites),
+          allowSites: normSites(input.allowSites),
+          startedAt: new Date(started).toISOString(),
+          endsAt: new Date(started + seconds * 1000).toISOString(),
+        };
+        focus.session = session;
+        return { ok: true, session };
+      },
+      endFocus: async () => {
+        expireFocus();
+        if (focus.restoreLockdown !== null && focus.restoreLockdown !== undefined) {
+          settings.focusLockdown = Boolean(focus.restoreLockdown);
+        }
+        focus.session = null;
+        focus.restoreLockdown = null;
+        return { ok: true, session: null };
+      },
+      focusCatalog: async (n) => {
+        const data = window.TallyDemo.aggregate(days, [1, 7, 30].includes(Number(n)) ? Number(n) : 30);
+        const apps = new Map();
+        const best = new Map();
+        for (const app of data.apps) {
+          const id = normalizeApp(app.key);
+          if (!id || app.seconds <= 0) continue;
+          const row = apps.get(id) || { id, name: '', seconds: 0, lastAt: 0, browser: false };
+          row.seconds += app.seconds;
+          row.lastAt = Math.max(row.lastAt, app.lastAt || 0);
+          if (app.browser) row.browser = true;
+          if (app.seconds > (best.get(id) || 0)) {
+            best.set(id, app.seconds);
+            row.name = app.name;
+          }
+          apps.set(id, row);
+        }
+        return {
+          apps: [...apps.values()].sort((a, b) => b.seconds - a.seconds),
+          sites: data.sites.map((site) => ({ domain: site.domain, seconds: site.seconds, lastAt: site.lastAt })),
+        };
       },
       clearData: async () => {
         for (const key of Object.keys(days)) delete days[key];

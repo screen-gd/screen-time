@@ -22,10 +22,29 @@
     return response.status === 204 ? null : response.json();
   }
 
+  // Session answers come back with their status so a 409 conflict can name the
+  // session already running.
+  async function focusRequest(path, options) {
+    const response = await fetch(`${base}${path}`, {
+      ...options,
+      headers: { 'content-type': 'application/json', 'x-tally-token': token },
+    });
+    const body = await response.json().catch(() => ({}));
+    if (response.status === 200 || response.status === 201) return { ok: true, session: body.session ?? null };
+    if (response.status === 409) return { ok: false, status: 409, session: body.session || null };
+    return { ok: false, status: 400, error: (body && body.error) || `backend ${response.status}` };
+  }
+
   window.tally = {
     snapshot: () => request('/api/v1/snapshot'),
     range: (days) => request(`/api/v1/range?days=${encodeURIComponent(days)}`),
     updateSettings: (patch) => request('/api/v1/settings', { method: 'PATCH', body: JSON.stringify(patch || {}) }),
+    startFocus: (input) => focusRequest('/api/v1/focus/session', {
+      method: 'POST',
+      body: JSON.stringify({ ...(input || {}), source: 'screen-time' }),
+    }),
+    endFocus: () => focusRequest('/api/v1/focus/session?source=screen-time', { method: 'DELETE' }),
+    focusCatalog: (days) => request(`/api/v1/focus/catalog?days=${encodeURIComponent(days)}`),
     clearData: () => request('/api/v1/clear', { method: 'POST', body: '{}' }),
     openDataFolder: async () => false,
     rescanBrowsers: () => request('/api/v1/browsers'),

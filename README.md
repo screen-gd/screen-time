@@ -84,6 +84,10 @@ Closing the window releases the frontend while tracking continues in the tray. R
 
 Pause from the tray or the sidebar. screen-time can start hidden at login. Settings › Appearance offers preset themes (Ink, T3 Code, T3 Chat, Forest, Fire) or a custom palette built from three colours.
 
+## Focus sessions
+
+On the Focus page, pick a goal, a mode and a length, and start a session. Allow mode permits only the listed apps and sites; block mode covers only the listed ones. While something outside the rules is in front, that window is covered, and the cover follows it while the rest of the screen stays usable. The overlay can always be dismissed to reach screen-time, and quitting ends enforcement. Sessions end by themselves, agents can run them through the bundled MCP server, and the old lockdown switch is now the "block list between sessions" setting. See [docs/focus.md](docs/focus.md).
+
 ## Where the data lives
 
 `%APPDATA%\Tally\tally-data.json` on Windows, `~/Library/Application Support/Tally/tally-data.json` on macOS, `~/.config/Tally/tally-data.json` on Linux. The path is shown in Settings, with a button to open the folder.

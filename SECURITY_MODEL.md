@@ -14,13 +14,15 @@ Electron app (`electron/main.js`, `preload.js` contextBridge, renderer `app/`) t
 
 ## Entry points
 - Loopback HTTP API `/api/v1/*`, `/healthz`, `/debug/*` (any local process, and any website via CORS `*` if the browser can reach 127.0.0.1:43821).
+- `tally-backend mcp`: stdio MCP server that reaches the API through the connection file.
 - Electron IPC channels exposed through `preload.js`.
 - Update feed: GitHub Releases over HTTPS.
-- Local filesystem: browser history databases (read), data JSON (read/write).
+- Local filesystem: browser history databases (read), data JSON (read/write), connection file (read/write).
 
 ## Assets
 - Full browsing history and app-usage record (sensitive personal data).
 - Settings and the data file; integrity of the installed binary (update path).
+- The API token in `connection.json` (user-readable only; grants full API access).
 
 ## Attackers
 - Malicious website in the user's browser calling the loopback API (read history, change settings, clear data).

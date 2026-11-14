@@ -3,10 +3,14 @@
 const windowModule = require('./tracker/window');
 const { identify, cleanBrowserTitle } = require('./tracker/apps');
 const browsers = require('./tracker/browsers');
-const { normalizeSiteList, blockedEntry, titleEntry } = require('./blocklist');
+const { normalizeSite, appIdOf, titleEntry } = require('./blocklist');
+const { alwaysAllowed, rulesFor, judge, blankPage } = require('./focus-rules');
 
 // Faster than the tracker's sampling so a blocked page is covered within about a second.
 const POLL_MS = 1000;
+
+// While a cover shows, a faster ticker follows the blocked window's moves.
+const TRACK_MS = 150;
 
 // A history answer covers the page only if the title matched it closely, or the
 // visit is this fresh. A loose match to an old visit (or the latest-visit guess
@@ -18,10 +22,16 @@ const STRONG_MATCH = 90;
 // the tracker's 45-second negative cache.
 const LOOKUP_RETRY_MS = 10 * 1000;
 
-// Focus lockdown watches the browser in front and covers the screen while it
-// shows a blocked site. Nothing is blocked on the network: the cover stays up
-// until the tab or the app in front changes. `cover` is { show(site), hide() };
-// the rest is injectable so the rules run without a desktop.
+// A page neither history nor its title can name gets a short grace before the
+// cover drops: history often learns it within a few seconds.
+const UNKNOWN_PAGE_MS = 4000;
+
+// The focus guard watches the window in front and covers the screen while a
+// session or the block list disallows it. Nothing is blocked on the network:
+// the cover stays up until the window or the rules change. `cover` is
+// { show(target, rect), hide(), move(rect) } and `placeCover` turns a
+// foreground reading into the cover's rect; the rest is injectable so the
+// rules run without a desktop.
 class FocusGuard {
   constructor({
     store,
@@ -30,7 +40,10 @@ class FocusGuard {
     lookup = browsers.lookup,
     identifyApp = identify,
     interval = POLL_MS,
+    trackInterval = TRACK_MS,
+    placeCover = () => null,
     selfPid = process.pid,
+    platform = process.platform,
   }) {
     this.store = store;
     this.cover = cover;
@@ -38,22 +51,33 @@ class FocusGuard {
     this.lookup = lookup;
     this.identifyApp = identifyApp;
     this.interval = interval;
+    this.trackInterval = trackInterval;
+    this.placeCover = placeCover;
     this.selfPid = selfPid;
+    this.platform = platform;
     this.timer = null;
+    this.trackTimer = null;
+    this.tracked = null;
+    this.slowReader = false;
     this.busy = false;
     this.blocking = null;
+    this.unknownKey = null;
+    this.unknownSince = 0;
   }
 
   get running() {
     return this.timer !== null;
   }
 
-  active() {
-    const settings = this.store.settings || {};
-    return Boolean(settings.focusLockdown) && normalizeSiteList(settings.blockedSites).length > 0;
+  rules() {
+    return rulesFor(this.store.settings, this.store.focusSession, Date.now());
   }
 
-  // Call after any settings change: starts or stops the watch to match.
+  active() {
+    return this.rules() !== null;
+  }
+
+  // Call after any settings or session change: starts or stops the watch to match.
   sync() {
     if (this.active()) this.start();
     else this.stop();
@@ -71,6 +95,7 @@ class FocusGuard {
   stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.stopTracking();
     this.clear();
   }
 
@@ -78,12 +103,16 @@ class FocusGuard {
     if (this.busy) return;
     this.busy = true;
     try {
-      if (!this.active()) {
+      let rules = this.rules();
+      if (!rules) {
         this.clear();
         return;
       }
-      const list = normalizeSiteList(this.store.settings.blockedSites);
+      const readStarted = Date.now();
       const foreground = this.readWindow();
+      // A read slower than the tracker's tick keeps fast tracking off; a later
+      // fast read turns it back on.
+      this.slowReader = Date.now() - readStarted > this.trackInterval;
       if (!foreground || foreground.error) return;
       // screen-time's own window in front: lift the cover so it can be used. A click
       // on the cover itself also lands here, and must not dismiss it.
@@ -91,43 +120,150 @@ class FocusGuard {
         if (!(this.cover.isFocused && this.cover.isFocused())) this.clear();
         return;
       }
-      const { browser } = this.identifyApp(foreground);
-      if (!browser) {
+      // The shell, the lock screen and friends are allowed in every mode.
+      if (alwaysAllowed(foreground, this.platform)) {
         this.clear();
         return;
       }
-      const title = cleanBrowserTitle(browser, foreground.title);
-      let site = titleEntry(foreground.title, list);
-      if (!site) {
-        let found = null;
-        try { found = await this.lookup(browser, title, { negativeMs: LOOKUP_RETRY_MS }); } catch { found = null; }
-        const fresh = found && Date.now() - found.visitedAt < FRESH_VISIT_MS;
-        const trusted = found && (fresh || (!found.guessed && found.match >= STRONG_MATCH));
-        if (trusted) site = blockedEntry(found.domain, list);
+      const identified = this.identifyApp(foreground);
+      const app = {
+        id: appIdOf(foreground.exePath),
+        name: identified.name,
+        bundleId: String(foreground.bundleId || '').toLowerCase(),
+        aumid: String(foreground.aumid || '').toLowerCase(),
+      };
+      let verdict;
+      if (!identified.browser) {
+        verdict = judge(rules, { app });
+      } else {
+        const seen = await this.readSite(foreground, identified, rules);
+        // The session may have ended while history was read; judge under the
+        // rules in force now, not the ones the lookup started with.
+        rules = this.rules();
+        if (!rules) {
+          this.clear();
+          return;
+        }
+        // The window in front may have changed during the lookup too; a verdict
+        // for the old one must not cover the new one. The next check judges it.
+        const now = this.readWindow();
+        if (!now || now.pid !== foreground.pid || now.title !== foreground.title) return;
+        verdict = judge(rules, { app, browser: true, site: seen.site, guessed: seen.guessed, blank: seen.blank });
       }
-      // Lockdown may have been turned off while history was read.
-      if (!this.active()) {
-        this.clear();
-        return;
+      if (verdict && verdict.kind === 'page') {
+        if (!this.pageGraceExpired(foreground)) verdict = null;
+      } else {
+        // A page judged allowed, or covered another way, ends any open
+        // grace; the next unknown page earns a fresh one.
+        this.unknownKey = null;
       }
-      if (site) this.block(site);
+      if (verdict) this.block(verdict, rules, foreground);
       else this.clear();
     } finally {
       this.busy = false;
     }
   }
 
+  // Resolves the site a browser shows: the title first (the longest listed
+  // site it names wins outright, so an allowSites exception beats its parent
+  // block), then the history lookup. A guessed answer is flagged so judge can
+  // let it cover, never open: it may name a site from another tab while the
+  // title shows a different one.
+  async readSite(foreground, identified, rules) {
+    const title = cleanBrowserTitle(identified.browser, foreground.title);
+    // Dotless entries (localhost) stay out of title matching: the bare word
+    // appears in ordinary titles, so they are recognized through history only.
+    let site = titleEntry(foreground.title, [...rules.allowSites, ...rules.sites]
+      .filter((entry) => entry.includes('.'))
+      .sort((a, b) => b.length - a.length));
+    let guessed = false;
+    if (!site) {
+      let found = null;
+      try { found = await this.lookup(identified.browser, title, { negativeMs: LOOKUP_RETRY_MS }); } catch { found = null; }
+      const fresh = found && Date.now() - found.visitedAt < FRESH_VISIT_MS;
+      const trusted = found && (fresh || (!found.guessed && found.match >= STRONG_MATCH));
+      if (trusted) site = normalizeSite(found.domain);
+      guessed = Boolean(trusted && found.guessed);
+    }
+    return { site, guessed, blank: blankPage(title) };
+  }
+
+  // An unnamed page is covered only once the same window has stayed unknown
+  // for the grace period, whatever its title says; a cover already showing it
+  // stays up.
+  pageGraceExpired(foreground) {
+    const key = foreground.pid;
+    if (this.blocking && this.blocking.key === key) return true;
+    if (this.unknownKey === key) return Date.now() - this.unknownSince >= UNKNOWN_PAGE_MS;
+    this.unknownKey = key;
+    this.unknownSince = Date.now();
+    return false;
+  }
+
   // Shown on every blocked check, not only the first: the cover may have been
-  // dismissed to open screen-time while the browser stayed on the same page.
-  block(site) {
-    this.blocking = site;
-    this.cover.show(site);
+  // dismissed to open screen-time while the page stayed in front.
+  block(verdict, rules, foreground) {
+    const target = {
+      kind: verdict.kind,
+      label: verdict.label,
+      mode: rules.mode,
+      goal: rules.session ? rules.session.goal : null,
+      endsAt: rules.session ? rules.session.endsAt : null,
+    };
+    this.blocking = { key: foreground.pid, target };
+    const placed = this.placeCover(foreground);
+    this.cover.show(target, placed && placed.rect);
+    this.track(foreground);
   }
 
   clear() {
     this.blocking = null;
+    this.stopTracking();
+    // The grace key survives a clear: it names a window, and only a different
+    // window (or the same window after it earned a cover) should restart it.
     this.cover.hide();
+  }
+
+  // While a cover shows, a fast ticker follows the covered window: a move
+  // slides the cover along, and anything else coming forward ends the cover
+  // early through a normal check. The window is known by pid and title, since
+  // one browser process owns every tab and window: another window or tab of
+  // the same browser gets its own check instead of inheriting the cover. The
+  // cover itself taking focus is ignored.
+  track(foreground) {
+    this.stopTracking();
+    if (this.slowReader) return;
+    this.tracked = { pid: foreground.pid, title: foreground.title };
+    this.trackTimer = setInterval(() => this.trackTick(), this.trackInterval);
+    if (this.trackTimer.unref) this.trackTimer.unref();
+  }
+
+  trackTick() {
+    const startedAt = Date.now();
+    const foreground = this.readWindow();
+    // A reader that blocks longer than the tick (a hung macOS app answering
+    // Accessibility slowly) would starve the main thread at this rate; stop
+    // tracking until a one-second check sees a fast read again.
+    if (Date.now() - startedAt > this.trackInterval) {
+      this.slowReader = true;
+      this.stopTracking();
+      return null;
+    }
+    if (!foreground || foreground.error) return null;
+    if (foreground.pid === this.selfPid) return null;
+    if (this.tracked && foreground.pid === this.tracked.pid && foreground.title === this.tracked.title) {
+      const placed = this.placeCover(foreground);
+      if (placed && placed.rect) this.cover.move(placed.rect);
+      return null;
+    }
+    return this.check().catch((error) => console.error('[tally] focus check failed:', error.message));
+  }
+
+  stopTracking() {
+    if (this.trackTimer) clearInterval(this.trackTimer);
+    this.trackTimer = null;
+    this.tracked = null;
   }
 }
 
-module.exports = { FocusGuard, POLL_MS };
+module.exports = { FocusGuard, POLL_MS, UNKNOWN_PAGE_MS, TRACK_MS };

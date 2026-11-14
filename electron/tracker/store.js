@@ -2,7 +2,8 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { normalizeSiteList } = require('../blocklist');
+const { normalizeSiteList, normalizeAppList, normalizeApp } = require('../blocklist');
+const { startFocus, endFocus, expireFocus } = require('../focus-session');
 
 const DEFAULTS = {
   version: 1,
@@ -20,9 +21,18 @@ const DEFAULTS = {
     browsers: null, // null means every detected browser
     focusLockdown: false,
     blockedSites: [], // hostnames covered while focusLockdown is on
+    focusMode: 'allow',
+    focusAllowApps: [],
+    focusAllowSites: [],
+    focusBlockApps: [], // app ids covered while focusLockdown is on
+    focusMinutes: 50,
   },
+  focus: { session: null, restoreLockdown: null },
   days: {},
 };
+
+const FOCUS_MODES = new Set(['allow', 'block']);
+const FOCUS_MINUTES = new Set([15, 25, 50, 90, 120, 180]);
 
 const THEME_PRESETS = new Set(['default', 't3code', 't3chat', 'forest', 'fire', 'custom']);
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -70,12 +80,18 @@ class Store {
           ...parsed,
           settings: { ...DEFAULTS.settings, ...(parsed.settings || {}) },
           days: parsed.days && typeof parsed.days === 'object' ? parsed.days : {},
+          focus: parsed.focus && typeof parsed.focus === 'object'
+            ? { session: parsed.focus.session || null, restoreLockdown: parsed.focus.restoreLockdown ?? null }
+            : { session: null, restoreLockdown: null },
         };
       }
     } catch {
       // first run, or a file that cannot be parsed: start clean rather than block the app
     }
     if (!this.data.createdAt) this.data.createdAt = new Date().toISOString();
+    // A session that expired while the app was away ends on open and restores
+    // the lockdown it saw.
+    if (expireFocus(this.data)) this.dirty = true;
     this.prune();
     return this;
   }
@@ -85,6 +101,9 @@ class Store {
   }
 
   updateSettings(patch) {
+    // An elapsed session ends before the write, like Go's UpdateSettings, so
+    // its stored lockdown cannot stomp the incoming value when it is noticed.
+    expireFocus(this.data);
     const next = { ...this.settings, ...patch };
     next.sampleSeconds = [5, 10, 30].includes(Number(next.sampleSeconds)) ? Number(next.sampleSeconds) : 5;
     next.idleSeconds = [60, 120, 300, 600].includes(Number(next.idleSeconds)) ? Number(next.idleSeconds) : 120;
@@ -99,6 +118,11 @@ class Store {
     next.browsers = Array.isArray(next.browsers) ? next.browsers.map(String) : null;
     next.focusLockdown = Boolean(next.focusLockdown);
     next.blockedSites = normalizeSiteList(next.blockedSites);
+    next.focusMode = FOCUS_MODES.has(next.focusMode) ? next.focusMode : 'allow';
+    next.focusAllowApps = normalizeAppList(next.focusAllowApps);
+    next.focusAllowSites = normalizeSiteList(next.focusAllowSites);
+    next.focusBlockApps = normalizeAppList(next.focusBlockApps);
+    next.focusMinutes = FOCUS_MINUTES.has(Number(next.focusMinutes)) ? Number(next.focusMinutes) : 50;
     const theme = next.theme && typeof next.theme === 'object' ? next.theme : {};
     next.theme = {
       preset: THEME_PRESETS.has(theme.preset) ? theme.preset : 'default',
@@ -109,6 +133,50 @@ class Store {
     this.data.settings = next;
     this.scheduleSave();
     return next;
+  }
+
+  // The live session, or null. Reading it ends an expired one first, so the
+  // guard and the UI always see the real state.
+  get focusSession() {
+    if (expireFocus(this.data)) this.scheduleSave(true);
+    return this.data.focus.session;
+  }
+
+  // Mirrors backend/internal/store/focus.go for the no-backend path; a change
+  // is written right away rather than after the save delay.
+  startFocus(input) {
+    const result = startFocus(this.data, input);
+    this.scheduleSave(true);
+    return result;
+  }
+
+  endFocus(source) {
+    const result = endFocus(this.data, source);
+    this.scheduleSave(true);
+    return result;
+  }
+
+  // The last `days` of usage merged for list suggestions: app keys collapse to
+  // normalized app ids, the name of the heaviest key wins.
+  catalog(days = 30) {
+    const data = this.aggregate([1, 7, 30].includes(Number(days)) ? Number(days) : 30);
+    const apps = new Map();
+    const best = new Map();
+    for (const app of data.apps) {
+      const id = normalizeApp(app.key);
+      if (!id || app.seconds <= 0) continue;
+      const row = apps.get(id) || { id, name: '', seconds: 0, lastAt: 0, browser: false };
+      row.seconds += app.seconds;
+      row.lastAt = Math.max(row.lastAt, app.lastAt || 0);
+      if (app.browser) row.browser = true;
+      if (app.seconds > (best.get(id) || 0)) {
+        best.set(id, app.seconds);
+        row.name = app.name;
+      }
+      apps.set(id, row);
+    }
+    const sites = data.sites.map((site) => ({ domain: site.domain, seconds: site.seconds, lastAt: site.lastAt }));
+    return { apps: [...apps.values()].sort((a, b) => b.seconds - a.seconds), sites };
   }
 
   record({ appKey, appName, title, browser, site, seconds, at = new Date() }) {
@@ -219,11 +287,15 @@ class Store {
 
   scheduleSave(immediate = false) {
     this.dirty = true;
-    if (this.saveTimer) return;
     if (immediate) {
+      if (this.saveTimer) {
+        clearTimeout(this.saveTimer);
+        this.saveTimer = null;
+      }
       this.flush();
       return;
     }
+    if (this.saveTimer) return;
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
       this.flush();
